@@ -10,6 +10,17 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 
+/// TODO: Implement this class to handle two-way communication between the main isolate and the server isolate.
+class ShelfServer {
+  final ReceivePort mainIsolateReceivePort = ReceivePort();
+  final SendPort mainIsolateSendPort;
+
+  final ReceivePort serverIsolateSendPort = ReceivePort();
+  late final SendPort serverIsolateReceivePort;
+
+  ShelfServer(this.mainIsolateSendPort);
+}
+
 /// Starts the server isolate and returns the isolate instance.
 /// This method handles the necessary communication between the main isolate and the server isolate.
 Future<(Isolate, SendPort, ReceivePort)> startServer(RootIsolateToken rootIsolateToken) async {
@@ -60,8 +71,9 @@ Future<(HttpServer, int)> _shelfInitiate() async {
   final router = Router()
     ..get(
       '/time',
-      (request) => Response.ok(DateTime.now().toUtc().toIso8601String()),
-    );
+      (Request request) => Response.ok(DateTime.now().toUtc().toIso8601String()),
+    )
+    ..get('/clicks', _clicksResponse);
   final cascade = Cascade()
       // If a corresponding file is not found, send requests to a `Router`
       .add(router.call);
@@ -106,4 +118,10 @@ Future<void> _spawnIsolate((RootIsolateToken, SendPort) arguments) async {
   }
 
   sendPort.send(port);
+}
+
+Future<Response> _clicksResponse(Request request) async {
+  /// We need to somehow communicate with the main isolate to get the current click count.
+
+  return Response.ok("31");
 }

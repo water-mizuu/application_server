@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 
+import 'package:application_server/future_not_null.dart';
+import 'package:application_server/global_state.dart';
 import 'package:application_server/main.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -11,117 +13,167 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 
 /// TODO: Implement this class to handle two-way communication between the main isolate and the server isolate.
+///   - [x] Read (via messages)
+///   - [x] Write (via messages as well)
 class ShelfServer {
-  final ReceivePort mainIsolateReceivePort = ReceivePort();
-  final SendPort mainIsolateSendPort;
+  final GlobalState globalState;
+  final ReceivePort receivePort = ReceivePort();
+  late final SendPort _sendPort = receivePort.sendPort;
+  late final SendPort serverSendPort;
 
-  final ReceivePort serverIsolateSendPort = ReceivePort();
-  late final SendPort serverIsolateReceivePort;
+  ShelfServer(this.globalState) {
+    receivePort.listen((message) {
+      switch (message) {
+        case "clickData":
+          serverSendPort.send(globalState.counter.value);
+          break;
+        case "clickOnce":
+          globalState.counter.value++;
+          serverSendPort.send(globalState.counter.value);
+          break;
+        case _:
+          if (kDebugMode) {
+            print("[UNKNOWN] Server Isolate Received: $message");
+          }
+      }
+    });
+  }
 
-  ShelfServer(this.mainIsolateSendPort);
+  Future<void> startServer() async {
+    assert(RootIsolateToken.instance != null, "This should be run in the root isolate.");
+    RootIsolateToken rootIsolateToken = RootIsolateToken.instance!;
+
+    Completer<int?> portCompleter = Completer<int?>();
+    port = portCompleter.future;
+
+    ReceivePort mainReceivePort = ReceivePort();
+    Isolate serverIsolate = await Isolate.spawn(
+      _spawnIsolate,
+      (rootIsolateToken, mainReceivePort.sendPort),
+    );
+
+    int receiveCount = 0;
+    mainReceivePort.listen((data) {
+      switch (receiveCount) {
+        case 0:
+          if (kDebugMode) {
+            print("Server Isolate Send Port received");
+          }
+
+          serverSendPort = data as SendPort;
+          serverIsolate.addOnExitListener(serverSendPort, response: null);
+          break;
+        case 1:
+          if (kDebugMode) {
+            print("Server Isolate Port received: $data");
+          }
+
+          portCompleter.complete(data as int);
+          break;
+        case >= 2:
+          if (kDebugMode) {
+            print("Server Isolate Received: $data");
+          }
+
+          _sendPort.send(data);
+          break;
+      }
+
+      receiveCount++;
+    });
+  }
+
+  /// Spawns the server in another isolate.
+  ///   It is critical that this METHOD does not see any of the fields of the [ShelfServer] class.
+  static Future<void> _spawnIsolate((RootIsolateToken, SendPort) payload) async {
+    var (token, sendPort) = payload;
+
+    IsolatedServer().init(token, sendPort);
+  }
 }
 
-/// Starts the server isolate and returns the isolate instance.
-/// This method handles the necessary communication between the main isolate and the server isolate.
-Future<(Isolate, SendPort, ReceivePort)> startServer(RootIsolateToken rootIsolateToken) async {
-  Completer<int?> portCompleter = Completer<int?>();
-  port = portCompleter.future;
+class IsolatedServer {
+  Completer<dynamic>? _receiveCompleter;
 
-  ReceivePort freeReceivePort = ReceivePort();
-  ReceivePort mainReceivePort = ReceivePort();
-  late SendPort isolateSendPort;
-  Isolate serverIsolate = await Isolate.spawn(
-    _spawnIsolate,
-    (rootIsolateToken, mainReceivePort.sendPort),
-  );
+  final ReceivePort receivePort = ReceivePort();
+  late final SendPort sendPort;
 
-  int receiveCount = 0;
-  mainReceivePort.listen((message) {
-    switch ((receiveCount, message)) {
-      /// The first message we receive from the isolate is the send port.
-      case (0, SendPort sendPort):
-        {
-          isolateSendPort = sendPort;
-          serverIsolate.addOnExitListener(isolateSendPort, response: null);
-          break;
-        }
-      case (1, int? port):
-        {
-          portCompleter.complete(port);
-          break;
-        }
-      case (> 1, dynamic message):
-        {
-          freeReceivePort.sendPort.send(message);
-        }
+  IsolatedServer()
+      : assert(RootIsolateToken.instance == null, "This should be run in another isolate.");
+
+  Future<void> init(RootIsolateToken token, SendPort mainIsolateSendPort) async {
+    sendPort = mainIsolateSendPort;
+
+    BackgroundIsolateBinaryMessenger.ensureInitialized(token);
+    sendPort.send(receivePort.sendPort);
+
+    /// Initialize the receivePort listener.
+    ///   I have no idea how to make this better.
+    receivePort.listen((data) {
+      if (kDebugMode) {
+        print("Server Isolate Received: $data");
+      }
+
+      if (_receiveCompleter != null && !_receiveCompleter!.isCompleted) {
+        _receiveCompleter!.complete(data);
+      }
+    });
+
+    var (serverInstance, serverPort) = await _shelfInitiate();
+    sendPort.send(serverPort);
+  }
+
+  /// Initializes the shelf server, returning the server instance and the port.
+  /// The port MAY need to be user modifiable.
+  Future<(HttpServer, int)> _shelfInitiate() async {
+    int port = 8080;
+
+    NetworkInfo network = NetworkInfo();
+
+    Router router = Router() //
+      ..get('/clicks', _getClicks)
+      ..get('/clickOnce', _getClickOnce)
+      ..get('/<a|.*>', (Request r, String a) => Response.notFound("Request '/$a' not found"));
+
+    Handler handler = Cascade() //
+        .add(router.call)
+        .handler;
+
+    String ip = await network.getWifiIP().notNull();
+    HttpServer server = await shelf_io.serve(logRequests().addHandler(handler), ip, port);
+
+    if (kDebugMode) {
+      print("Serving at $ip:$port");
     }
-    receiveCount++;
-  });
 
-  return (serverIsolate, isolateSendPort, freeReceivePort);
-}
-
-/// Initializes the shelf server, returning the server instance and the port.
-/// The port MAY need to be user modifiable.
-Future<(HttpServer, int)> _shelfInitiate() async {
-  int port = 8080;
-
-  NetworkInfo network = NetworkInfo();
-
-  final router = Router()
-    ..get(
-      '/time',
-      (Request request) => Response.ok(DateTime.now().toUtc().toIso8601String()),
-    )
-    ..get('/clicks', _clicksResponse);
-  final cascade = Cascade()
-      // If a corresponding file is not found, send requests to a `Router`
-      .add(router.call);
-
-  var ip = await network.getWifiIP().then((p) => p!);
-  var server = await shelf_io.serve(logRequests().addHandler(cascade.handler), ip, port);
-
-  if (kDebugMode) {
-    print("Serving at $ip:$port");
+    return (server, port);
   }
 
-  return (server, port);
-}
+  /// Sends a request to the main isolate and returns the response.
+  ///   This is a blocking operation.
+  ///   There should be an appropriate handler in the main isolate.
+  Future<T?> _request<T extends Object>(Object? request) async {
+    Completer<T> completer = Completer<T>();
+    _receiveCompleter = completer;
+    sendPort.send(request);
+    T response = await completer.future;
+    _receiveCompleter = null;
 
-Future<void> _spawnIsolate((RootIsolateToken, SendPort) arguments) async {
-  var (RootIsolateToken token, SendPort sendPort) = arguments;
-
-  BackgroundIsolateBinaryMessenger.ensureInitialized(token);
-  ReceivePort isolateReceivePort = ReceivePort();
-  sendPort.send(isolateReceivePort.sendPort);
-
-  if (kDebugMode) {
-    print("Duplex communication established");
+    return response;
   }
 
-  var (HttpServer server, int port) = await _shelfInitiate();
-
-  int isolateReceiveCount = 0;
-  await for (dynamic message in isolateReceivePort) {
-    switch ((isolateReceiveCount, message)) {
-      case (0, null):
-        {
-          await server.close(force: true);
-          break;
-        }
-      case _:
-        {
-          throw Exception('Unexpected message from main isolate at count $isolateReceiveCount');
-        }
+  Future<Response> _getClicks(Request request) async {
+    if (await _request("clickData") case int clicks) {
+      return Response.ok("Clicks: $clicks");
     }
-    isolateReceiveCount++;
+
+    return Response.badRequest();
   }
 
-  sendPort.send(port);
-}
-
-Future<Response> _clicksResponse(Request request) async {
-  /// We need to somehow communicate with the main isolate to get the current click count.
-
-  return Response.ok("31");
+  Future<Response> _getClickOnce(Request request) async {
+    if (await _request("clickOnce") case int clicks) {
+      return Response.ok("Clicks: $clicks");
+    }
+    return Response.badRequest();
+  }
 }

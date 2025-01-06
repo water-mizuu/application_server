@@ -1,9 +1,10 @@
 import 'dart:async';
 
+import 'package:application_server/global_state.dart';
 import 'package:application_server/shelf.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 
 late Future<int?> port;
 
@@ -14,8 +15,21 @@ Future<void> main() async {
     print("Server Isolate Starting");
   }
 
-  var (isolate, sendPort, receivePort) = await startServer(RootIsolateToken.instance!);
-  runApp(const MyApp());
+  /// The only shared state between the main isolate and the server isolate.
+  GlobalState globalState = GlobalState();
+  ShelfServer server = ShelfServer(globalState);
+  await server.startServer();
+
+  if (kDebugMode) {
+    print("Server Isolate Started");
+  }
+
+  runApp(
+    Provider.value(
+      value: globalState,
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -34,30 +48,17 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class MyHomePage extends StatefulWidget {
+class MyHomePage extends StatelessWidget {
   const MyHomePage({super.key, required this.title});
 
   final String title;
-
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
-
-  void _incrementCounter() {
-    setState(() {
-      _counter++;
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: Text(widget.title),
+        title: Text(title),
       ),
       body: Center(
         child: Column(
@@ -66,15 +67,22 @@ class _MyHomePageState extends State<MyHomePage> {
             const Text(
               'You have pushed the button this many times:',
             ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+            ValueListenableBuilder(
+              valueListenable: context.read<GlobalState>().counter,
+              builder: (context, value, child) {
+                return Text(
+                  '$value',
+                  style: Theme.of(context).textTheme.headlineMedium,
+                );
+              },
             ),
           ],
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
+        onPressed: () {
+          context.read<GlobalState>().counter.value++;
+        },
         tooltip: 'Increment',
         child: const Icon(Icons.add),
       ),

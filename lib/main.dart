@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:application_server/global_state.dart';
 import 'package:application_server/shelf.dart';
+import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:system_theme/system_theme.dart';
 
 late Future<int?> port;
 
@@ -37,11 +39,11 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return FluentApp(
       title: 'Flutter Demo',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
+      theme: FluentThemeData(
+        accentColor: SystemTheme.accentColor.accent.toAccentColor(),
+        fontFamily: 'Segoe UI',
       ),
       home: const MyHomePage(title: 'Flutter Demo Home Page'),
     );
@@ -57,8 +59,8 @@ class MyHomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: Text(title),
+        backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+        title: Text(title, style: Theme.of(context).textTheme.headlineSmall),
       ),
       body: Center(
         child: Column(
@@ -76,15 +78,14 @@ class MyHomePage extends StatelessWidget {
                 );
               },
             ),
+            Button(
+              onPressed: () {
+                context.read<GlobalState>().counter.value++;
+              },
+              child: const Icon(Icons.add),
+            ),
           ],
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          context.read<GlobalState>().counter.value++;
-        },
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
       ),
     );
   }

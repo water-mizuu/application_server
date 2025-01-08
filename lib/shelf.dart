@@ -12,9 +12,6 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 
-/// TODO: Implement this class to handle two-way communication between the main isolate and the server isolate.
-///   - [x] Read (via messages)
-///   - [x] Write (via messages as well)
 class ShelfServer {
   final GlobalState globalState;
   final ReceivePort receivePort = ReceivePort();

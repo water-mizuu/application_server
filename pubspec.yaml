@@ -39,6 +39,9 @@ dependencies:
   shared_preferences: ^2.3.5
   shelf: ^1.4.2
   shelf_router: ^1.1.4
+  fluent_ui: ^4.10.0
+  scroll_animator: ^0.3.0
+  system_theme: ^3.1.2
 
 dev_dependencies:
   flutter_test:

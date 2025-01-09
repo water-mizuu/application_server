@@ -12,11 +12,10 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   /// The only shared state between the main isolate and the server isolate.
-  GlobalState globalState = GlobalState();
-
   runApp(
-    Provider.value(
-      value: globalState,
+    Provider(
+      create: (_) => GlobalState(),
+      dispose: (_, GlobalState state) => state.dispose(),
       child: const ExampleApplication(),
     ),
   );

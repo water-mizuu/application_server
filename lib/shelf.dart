@@ -32,6 +32,7 @@ final class ShelfParentServer implements ShelfServer {
   late final int port;
 
   final GlobalState globalState;
+  final ReceivePort _startupReceivePort = ReceivePort();
   final ReceivePort receivePort = ReceivePort();
   late final SendPort _sendPort = receivePort.sendPort;
   late final SendPort serverSendPort;
@@ -72,14 +73,13 @@ final class ShelfParentServer implements ShelfServer {
     assert(RootIsolateToken.instance != null, 'This should be run in the root isolate.');
     RootIsolateToken rootIsolateToken = RootIsolateToken.instance!;
 
-    ReceivePort initReceivePort = ReceivePort();
     Isolate serverIsolate = await Isolate.spawn(
       _spawnIsolate,
-      (rootIsolateToken, initReceivePort.sendPort, port),
+      (rootIsolateToken, _startupReceivePort.sendPort, port),
     );
 
     int receiveCount = 0;
-    initReceivePort.listen((data) {
+    _startupReceivePort.listen((data) {
       switch (receiveCount) {
         case 0:
           if (kDebugMode) {
@@ -125,6 +125,7 @@ final class ShelfParentServer implements ShelfServer {
     await closeCompleter.future;
 
     receivePort.close();
+    _startupReceivePort.close();
     isStarted = false;
   }
 
@@ -189,7 +190,10 @@ final class _IsolatedParentServer {
               var uri = Uri.parse('http://$ip:$port/click');
 
               await http.put(uri, body: clicks.toString());
-            } on http.ClientException {
+            } on http.ClientException catch (e) {
+              if (kDebugMode) {
+                print('[PARENT] Removing device $ip:$port due to error $e');
+              }
               _childDevices.remove((ip, port));
             }
           }
@@ -467,6 +471,7 @@ final class _IsolatedChildServer {
           sendPort.send(('confirmClose', null));
         }
       });
+
       sendPort.send(serverPort);
       sendPort.send(1);
     } catch (e) {
@@ -504,10 +509,11 @@ final class _IsolatedChildServer {
     Handler handler = Cascade() //
         .add(router.call)
         .handler;
+
     HttpServer server = await shelf_io.serve(logRequests().addHandler(handler), ip, 0);
 
     if (kDebugMode) {
-      print('[CHILD:Server] Serving at $ip:${server.port}}');
+      print('[CHILD:Server] Serving at $ip:${server.port}');
     }
 
     return (server, server.port);

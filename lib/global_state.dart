@@ -86,6 +86,10 @@ class GlobalState {
     }
   }
 
+  Future<void> dispose() async {
+    await _currentServer?.stopServer();
+  }
+
   ShelfServer? _currentServer;
 
   Future<void> _childHandshake(String ip, int port, String parentIp, int parentPort) async {

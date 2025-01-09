@@ -45,17 +45,12 @@ class ShelfParentServer implements ShelfServer {
   @override
   bool isStarted = false;
 
-  ShelfParentServer(this.globalState, this.ip, this.port) {
-    globalState.counter.addListener(() {
-      serverSendPort.send(("click", globalState.counter.value));
-    });
+  final bool _clicksLock = false;
 
+  ShelfParentServer(this.globalState, this.ip, this.port) {
     receivePort.listen((message) {
       switch (message) {
-        case "clickData":
-          serverSendPort.send(("requested", globalState.counter.value));
-          break;
-        case "clickOnce":
+        case "click":
           globalState.counter.value++;
           serverSendPort.send(("requested", globalState.counter.value));
           break;
@@ -72,17 +67,19 @@ class ShelfParentServer implements ShelfServer {
 
   @override
   Future<void> startServer() async {
+    globalState.counter.addListener(_clickListener);
+
     assert(RootIsolateToken.instance != null, "This should be run in the root isolate.");
     RootIsolateToken rootIsolateToken = RootIsolateToken.instance!;
 
-    ReceivePort mainReceivePort = ReceivePort();
+    ReceivePort initReceivePort = ReceivePort();
     Isolate serverIsolate = await Isolate.spawn(
       _spawnIsolate,
-      (rootIsolateToken, mainReceivePort.sendPort, port),
+      (rootIsolateToken, initReceivePort.sendPort, port),
     );
 
     int receiveCount = 0;
-    mainReceivePort.listen((data) {
+    initReceivePort.listen((data) {
       switch (receiveCount) {
         case 0:
           if (kDebugMode) {
@@ -123,11 +120,18 @@ class ShelfParentServer implements ShelfServer {
   Future<void> stopServer() async {
     if (!isStarted) return;
 
+    globalState.counter.removeListener(_clickListener);
     serverSendPort.send(("stop", null));
     await closeCompleter.future;
 
     receivePort.close();
     isStarted = false;
+  }
+
+  void _clickListener() {
+    if (_clicksLock) return;
+
+    serverSendPort.send(("click", globalState.counter.value));
   }
 
   /// Spawns the server in another isolate.
@@ -171,12 +175,14 @@ class _IsolatedParentServer {
         if (data case ("requested", dynamic v)) {
           if (_receiveCompleter != null && !_receiveCompleter!.isCompleted) {
             _receiveCompleter!.complete(v);
-          } else {
-            throw StateError("No completer was assigned for the received data: $v");
           }
         }
 
         if (data case ("click", int clicks)) {
+          if (kDebugMode) {
+            print("[PARENT] Received click data: $clicks");
+            print("[PARENT] There are currently child devices with IPs $_childDevices");
+          }
           List<http.Response> results = await Future.wait([
             for (var (ip, port) in _childDevices)
               if (Uri.parse('http://$ip:$port/click') case var uri)
@@ -229,14 +235,8 @@ class _IsolatedParentServer {
         return Response.ok("Registered $deviceIp:$devicePort");
       },
     )
-    ..get('/clicks', (Request request) async {
-      if (await _request("clickData") case int clicks) {
-        return Response.ok("Clicks: $clicks");
-      }
-      return Response.badRequest();
-    })
-    ..put('/clickOnce', (Request request) async {
-      if (await _request("clickOnce") case int clicks) {
+    ..put('/click', (Request request) async {
+      if (await _request("click") case int clicks) {
         return Response.ok("Clicks: $clicks");
       }
       return Response.badRequest();
@@ -283,7 +283,6 @@ class ShelfChildServer implements ShelfServer {
   late final int port;
 
   final String parentIp;
-
   final int parentPort;
 
   final GlobalState globalState;
@@ -300,13 +299,17 @@ class ShelfChildServer implements ShelfServer {
   @override
   bool isStarted = false;
 
-  ShelfChildServer(this.globalState, this.ip, this.parentIp, this.parentPort) {
-    globalState.counter.addListener(() {
-      serverSendPort.send(("click", globalState.counter.value));
-    });
+  bool _clicksLock = false;
 
+  ShelfChildServer(this.globalState, this.ip, this.parentIp, this.parentPort) {
     receivePort.listen((message) {
       switch (message) {
+        case ("syncClicks", int newCount):
+          _clicksLock = true;
+          globalState.counter.value = newCount;
+          serverSendPort.send(true);
+          _clicksLock = false;
+          break;
         case ("newClicks", int newCount):
           globalState.counter.value = newCount;
           serverSendPort.send(true);
@@ -324,17 +327,19 @@ class ShelfChildServer implements ShelfServer {
 
   @override
   Future<void> startServer() async {
+    globalState.counter.addListener(_clickListener);
+
     assert(RootIsolateToken.instance != null, "This should be run in the root isolate.");
     RootIsolateToken rootIsolateToken = RootIsolateToken.instance!;
 
-    ReceivePort mainReceivePort = ReceivePort();
+    ReceivePort setupReceivePort = ReceivePort();
     Isolate serverIsolate = await Isolate.spawn(
       _spawnIsolate,
-      (rootIsolateToken, mainReceivePort.sendPort, parentIp, parentPort),
+      (rootIsolateToken, setupReceivePort.sendPort, parentIp, parentPort),
     );
 
     int receiveCount = 0;
-    mainReceivePort.listen((data) {
+    setupReceivePort.listen((data) {
       switch (receiveCount) {
         case 0:
           if (kDebugMode) {
@@ -381,11 +386,18 @@ class ShelfChildServer implements ShelfServer {
   Future<void> stopServer() async {
     if (!isStarted) return;
 
+    globalState.counter.removeListener(_clickListener);
     serverSendPort.send(("stop", null));
     await closeCompleter.future;
 
     receivePort.close();
     isStarted = false;
+  }
+
+  void _clickListener() {
+    if (_clicksLock) return;
+
+    serverSendPort.send(("click", globalState.counter.value));
   }
 
   /// Spawns the server in another isolate.
@@ -466,7 +478,7 @@ class _IsolatedChildServer {
         int newCount = await request.readAsString().then(int.parse);
 
         /// Update the local state.
-        await _request<bool>(("newClicks", newCount));
+        await _request<bool>(("syncClicks", newCount));
 
         return Response.ok(newCount);
       } catch (e) {

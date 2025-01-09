@@ -38,18 +38,14 @@ class GlobalState {
     try {
       if (_currentServer case ShelfServer server when server.isStarted) {
         yield ("message", "Closing the existing server at http://${server.ip}:${server.port}");
-        await Future.delayed(Duration(seconds: 1));
         await server.stopServer();
-        await Future.delayed(Duration(seconds: 1));
         yield ("message", "Closed the server.");
       }
 
       yield ("message", "Starting server at http://$ip:$port");
-      await Future.delayed(Duration(seconds: 1));
       _currentServer = ShelfParentServer(this, ip, port);
       await _currentServer!.startServer();
       yield ("message", "Started server at http://$ip:$port");
-      await Future.delayed(Duration(seconds: 1));
       yield ("done", "Server started");
       address.value = (ip, port);
       parentAddress.value = null;
@@ -67,25 +63,20 @@ class GlobalState {
     try {
       if (_currentServer case ShelfServer server when server.isStarted) {
         yield ("message", "Closing the existing server at http://${server.ip}:${server.port}");
-        await Future.delayed(Duration(seconds: 1));
         await server.stopServer();
-        await Future.delayed(Duration(seconds: 1));
         yield ("message", "Closed the server.");
       }
 
       yield ("message", "Starting server at http://$ip:$port");
-      await Future.delayed(Duration(seconds: 1));
       _currentServer = ShelfChildServer(this, ip, parentIp, parentPort);
 
       await _currentServer!.startServer();
       port = _currentServer!.port;
       yield ("message", "Started server at http://$ip:$port");
-      await Future.delayed(Duration(seconds: 1));
 
       yield ("message", "Handshaking with the parent device at http://$parentIp:$parentPort");
       await _childHandshake(ip, port, parentIp, parentPort);
       yield ("message", "Handshaked with the parent device at http://$parentIp:$parentPort");
-      await Future.delayed(Duration(seconds: 1));
       yield ("done", "Connection established");
       address.value = (ip, port);
       parentAddress.value = (parentIp, parentPort);

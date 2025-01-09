@@ -73,11 +73,11 @@ class _MyHomePageState extends State<MyHomePage> {
               children: [
                 Button(
                   onPressed: _childPressed,
-                  child: Text("Child"),
+                  child: Text('Child'),
                 ),
                 Button(
                   onPressed: _parentPressed,
-                  child: Text("Parent"),
+                  child: Text('Parent'),
                 ),
               ],
             ),
@@ -127,7 +127,7 @@ class _MyHomePageState extends State<MyHomePage> {
     }
 
     GlobalKey<FormState> formKey = GlobalKey<FormState>();
-    TextEditingController ipTextController = TextEditingController()..text = "192.168";
+    TextEditingController ipTextController = TextEditingController()..text = '192.168';
     TextEditingController portTextController = TextEditingController();
 
     Stream<(String, Object)>? serverStartStream;
@@ -144,18 +144,18 @@ class _MyHomePageState extends State<MyHomePage> {
                 children: [
                   Row(
                     children: [
-                      Text("IP: "),
+                      Text('IP: '),
                       Expanded(
                         child: TextFormField(
                           autofocus: true,
                           controller: ipTextController,
                           validator: (String? value) {
                             if (value == null || value.isEmpty) {
-                              return "Please enter an IP address.";
+                              return 'Please enter an IP address.';
                             }
 
                             if (value == ip) {
-                              return "You cannot connect to yourself.";
+                              return 'You cannot connect to yourself.';
                             }
 
                             return null;
@@ -166,17 +166,17 @@ class _MyHomePageState extends State<MyHomePage> {
                   ),
                   Row(
                     children: [
-                      Text("Port: "),
+                      Text('Port: '),
                       Expanded(
                         child: TextFormField(
                           controller: portTextController,
                           validator: (String? value) {
                             if (value == null || value.isEmpty) {
-                              return "Please enter a port.";
+                              return 'Please enter a port.';
                             }
 
                             if (int.tryParse(value) case null) {
-                              return "Please enter a valid port.";
+                              return 'Please enter a valid port.';
                             }
 
                             return null;
@@ -192,7 +192,7 @@ class _MyHomePageState extends State<MyHomePage> {
                         onPressed: () {
                           Navigator.of(context).pop();
                         },
-                        child: Text("Cancel"),
+                        child: Text('Cancel'),
                       ),
                       Button(
                         onPressed: () async {
@@ -207,7 +207,7 @@ class _MyHomePageState extends State<MyHomePage> {
                             serverStartStream = globalState.hostChild(ip, 0, parentIp, parentPort);
                           });
                         },
-                        child: Text("Confirm"),
+                        child: Text('Confirm'),
                       ),
                     ],
                   ),
@@ -217,22 +217,22 @@ class _MyHomePageState extends State<MyHomePage> {
                       stream: serverStartStream,
                       builder: (context, snapshot) {
                         if (snapshot.hasError) {
-                          return Text("Error: ${snapshot.error}");
+                          return Text('Error: ${snapshot.error}');
                         }
 
                         if (snapshot.hasData) {
                           switch (snapshot.data) {
-                            case ("message", String message):
-                              return Text("Message: $message");
+                            case ('message', String message):
+                              return Text('Message: $message');
 
                             /// Error Code 13: Permission denied.
-                            case ("exception", SocketException(osError: OSError(errorCode: 13))):
+                            case ('exception', SocketException(osError: OSError(errorCode: 13))):
                               return Text(
-                                "Permission denied. Either the port is already in use"
+                                'Permission denied. Either the port is already in use'
                                 " or you don't have permission to use it.",
                                 style: TextStyle(color: Colors.red),
                               );
-                            case ("done", _):
+                            case ('done', _):
                               Navigator.of(context).pop();
                               return const SizedBox();
                           }
@@ -280,18 +280,18 @@ class _MyHomePageState extends State<MyHomePage> {
                 children: [
                   Row(
                     children: [
-                      Text("IP: "),
+                      Text('IP: '),
                       Expanded(
                         child: TextFormField(
                           enabled: false,
                           controller: ipTextController,
                           validator: (String? value) {
                             if (value == null || value.isEmpty) {
-                              return "Please enter an IP address.";
+                              return 'Please enter an IP address.';
                             }
 
                             if (value != ip) {
-                              return "You cannot host to other but yourself.";
+                              return 'You cannot host to other but yourself.';
                             }
 
                             return null;
@@ -302,18 +302,18 @@ class _MyHomePageState extends State<MyHomePage> {
                   ),
                   Row(
                     children: [
-                      Text("Port: "),
+                      Text('Port: '),
                       Expanded(
                         child: TextFormField(
                           autofocus: true,
                           controller: portTextController,
                           validator: (String? value) {
                             if (value == null || value.isEmpty) {
-                              return "Please enter a port.";
+                              return 'Please enter a port.';
                             }
 
                             if (int.tryParse(value) case null) {
-                              return "Please enter a valid port.";
+                              return 'Please enter a valid port.';
                             }
 
                             return null;
@@ -329,7 +329,7 @@ class _MyHomePageState extends State<MyHomePage> {
                         onPressed: () {
                           Navigator.of(context).pop();
                         },
-                        child: Text("Cancel"),
+                        child: Text('Cancel'),
                       ),
                       Button(
                         onPressed: () async {
@@ -344,7 +344,7 @@ class _MyHomePageState extends State<MyHomePage> {
                             serverStartStream = globalState.hostParent(ip, port);
                           });
                         },
-                        child: Text("Confirm"),
+                        child: Text('Confirm'),
                       ),
                     ],
                   ),
@@ -354,22 +354,22 @@ class _MyHomePageState extends State<MyHomePage> {
                       stream: serverStartStream,
                       builder: (context, snapshot) {
                         if (snapshot.hasError) {
-                          return Text("Error: ${snapshot.error}");
+                          return Text('Error: ${snapshot.error}');
                         }
 
                         if (snapshot.hasData) {
                           switch (snapshot.data) {
-                            case ("message", String message):
-                              return Text("Message: $message");
+                            case ('message', String message):
+                              return Text('Message: $message');
 
                             /// Error Code 13: Permission denied.
-                            case ("exception", SocketException(osError: OSError(errorCode: 13))):
+                            case ('exception', SocketException(osError: OSError(errorCode: 13))):
                               return Text(
-                                "Permission denied. Either the port is already in use"
+                                'Permission denied. Either the port is already in use'
                                 " or you don't have permission to use it.",
                                 style: TextStyle(color: Colors.red),
                               );
-                            case ("done", _):
+                            case ('done', _):
                               Navigator.of(context).pop();
                               return const SizedBox();
                           }

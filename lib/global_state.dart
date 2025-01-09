@@ -37,22 +37,22 @@ class GlobalState {
 
     try {
       if (_currentServer case ShelfServer server when server.isStarted) {
-        yield ("message", "Closing the existing server at http://${server.ip}:${server.port}");
+        yield ('message', 'Closing the existing server at http://${server.ip}:${server.port}');
         await server.stopServer();
-        yield ("message", "Closed the server.");
+        yield ('message', 'Closed the server.');
       }
 
-      yield ("message", "Starting server at http://$ip:$port");
+      yield ('message', 'Starting server at http://$ip:$port');
       _currentServer = ShelfParentServer(this, ip, port);
       await _currentServer!.startServer();
-      yield ("message", "Started server at http://$ip:$port");
-      yield ("done", "Server started");
+      yield ('message', 'Started server at http://$ip:$port');
+      yield ('done', 'Server started');
       address.value = (ip, port);
       parentAddress.value = null;
     } on SocketException catch (e) {
-      yield ("exception", e);
+      yield ('exception', e);
     } catch (e) {
-      yield ("error", e);
+      yield ('error', e);
     }
   }
 
@@ -62,43 +62,42 @@ class GlobalState {
 
     try {
       if (_currentServer case ShelfServer server when server.isStarted) {
-        yield ("message", "Closing the existing server at http://${server.ip}:${server.port}");
+        yield ('message', 'Closing the existing server at http://${server.ip}:${server.port}');
         await server.stopServer();
-        yield ("message", "Closed the server.");
+        yield ('message', 'Closed the server.');
       }
 
-      yield ("message", "Starting server at http://$ip:$port");
+      yield ('message', 'Starting server at http://$ip:$port');
       _currentServer = ShelfChildServer(this, ip, parentIp, parentPort);
-
       await _currentServer!.startServer();
       port = _currentServer!.port;
-      yield ("message", "Started server at http://$ip:$port");
+      yield ('message', 'Started server at http://$ip:$port');
 
-      yield ("message", "Handshaking with the parent device at http://$parentIp:$parentPort");
+      yield ('message', 'Handshaking with the parent device at http://$parentIp:$parentPort');
       await _childHandshake(ip, port, parentIp, parentPort);
-      yield ("message", "Handshaked with the parent device at http://$parentIp:$parentPort");
-      yield ("done", "Connection established");
+      yield ('message', 'Handshaked with the parent device at http://$parentIp:$parentPort');
+      yield ('done', 'Connection established');
       address.value = (ip, port);
       parentAddress.value = (parentIp, parentPort);
     } on SocketException catch (e) {
-      yield ("exception", e);
+      yield ('exception', e);
     } catch (e) {
-      yield ("error", e);
+      yield ('error', e);
     }
   }
 
   ShelfServer? _currentServer;
 
   Future<void> _childHandshake(String ip, int port, String parentIp, int parentPort) async {
-    Uri uri = Uri.parse("http://$parentIp:$parentPort/register_child_device/$ip/$port");
+    Uri uri = Uri.parse('http://$parentIp:$parentPort/register_child_device/$ip/$port');
     http.Response response = await http.post(uri);
 
     if (kDebugMode) {
-      print("[CHILD] Handshake: ${response.statusCode} ${response.body}");
+      print('[CHILD] Handshake: ${response.statusCode} ${response.body}');
     }
 
     if (response.statusCode != 200) {
-      throw Exception("Failed to handshake with the parent device.");
+      throw Exception('Failed to handshake with the parent device.');
     }
   }
 }

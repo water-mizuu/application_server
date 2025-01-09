@@ -204,10 +204,29 @@ class _IsolatedParentServer {
   /// The router used by the shelf router. Define all routes here.
   late final Router router = Router() //
     ..post(
-      r'/register_child_device/<deviceIp>/<devicePort:\d+',
+      r'/register_child_device/<deviceIp>/<devicePort:\d+>',
       (Request request, String deviceIp, String devicePort) async {
         /// Whenever a child device registers, we do a handshake.
+        /// First, we ping the child device to confirm its existence.
+        /// Then, we add it to the list of child devices.
+
+        if (kDebugMode) {
+          print("[PARENT] Received registration from $deviceIp:$devicePort");
+        }
+
+        if (_childDevices.contains((deviceIp, devicePort))) {
+          return Response.badRequest(body: "Device already registered.");
+        }
+
+        Uri uri = Uri.parse('http://$deviceIp:$devicePort/confirm_parent_device');
+        http.Response response = await http.post(uri);
+        if (response.statusCode != 200) {
+          return Response.badRequest(body: "Failed to confirm the device.");
+        }
+
         _childDevices.add((deviceIp, devicePort));
+
+        return Response.ok("Registered $deviceIp:$devicePort");
       },
     )
     ..get('/clicks', (Request request) async {
@@ -411,6 +430,12 @@ class _IsolatedChildServer {
 
   /// The router used by the shelf router. Define all routes here.
   late final Router router = Router() //
+    ..post("/confirm_parent_device", (Request request) async {
+      if (kDebugMode) {
+        return Response.ok(request);
+      }
+      return Response.ok("Confirmed parent device");
+    })
     ..put("/clickData", (Request request) async {
       try {
         int newCount = await request.readAsString().then(int.parse);

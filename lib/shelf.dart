@@ -282,6 +282,10 @@ class ShelfChildServer implements ShelfServer {
   @override
   late final int port;
 
+  final String parentIp;
+
+  final int parentPort;
+
   final GlobalState globalState;
   final ReceivePort receivePort = ReceivePort();
   late final SendPort _sendPort = receivePort.sendPort;
@@ -296,7 +300,11 @@ class ShelfChildServer implements ShelfServer {
   @override
   bool isStarted = false;
 
-  ShelfChildServer(this.globalState, this.ip, this.port) {
+  ShelfChildServer(this.globalState, this.ip, this.parentIp, this.parentPort) {
+    globalState.counter.addListener(() {
+      serverSendPort.send(("click", globalState.counter.value));
+    });
+
     receivePort.listen((message) {
       switch (message) {
         case ("newClicks", int newCount):
@@ -322,7 +330,7 @@ class ShelfChildServer implements ShelfServer {
     ReceivePort mainReceivePort = ReceivePort();
     Isolate serverIsolate = await Isolate.spawn(
       _spawnIsolate,
-      (rootIsolateToken, mainReceivePort.sendPort),
+      (rootIsolateToken, mainReceivePort.sendPort, parentIp, parentPort),
     );
 
     int receiveCount = 0;
@@ -382,14 +390,17 @@ class ShelfChildServer implements ShelfServer {
 
   /// Spawns the server in another isolate.
   ///   It is critical that this METHOD does not see any of the fields of the [ShelfChildServer] class.
-  static Future<void> _spawnIsolate((RootIsolateToken, SendPort) payload) async {
-    var (token, sendPort) = payload;
+  static Future<void> _spawnIsolate((RootIsolateToken, SendPort, String, int) payload) async {
+    var (token, sendPort, parentIp, parentPort) = payload;
 
-    _IsolatedChildServer().init(token, sendPort);
+    _IsolatedChildServer(parentIp, parentPort).init(token, sendPort);
   }
 }
 
 class _IsolatedChildServer {
+  final String parentIp;
+  final int parentPort;
+
   /// A catcher of sorts for the receivePort listener.
   /// Whenever we request something from the main isolate, we must assign a completer BEFOREHAND.
   Completer<dynamic>? _receiveCompleter;
@@ -397,46 +408,60 @@ class _IsolatedChildServer {
   final ReceivePort receivePort = ReceivePort();
   late final SendPort sendPort;
 
-  _IsolatedChildServer()
+  _IsolatedChildServer(this.parentIp, this.parentPort)
       : assert(RootIsolateToken.instance == null, "This should be run in another isolate.");
 
   Future<void> init(RootIsolateToken token, SendPort mainIsolateSendPort) async {
-    sendPort = mainIsolateSendPort;
+    try {
+      sendPort = mainIsolateSendPort;
 
-    BackgroundIsolateBinaryMessenger.ensureInitialized(token);
-    sendPort.send(receivePort.sendPort);
+      BackgroundIsolateBinaryMessenger.ensureInitialized(token);
+      sendPort.send(receivePort.sendPort);
 
-    var (serverInstance, serverPort) = await _shelfInitiate();
+      var (serverInstance, serverPort) = await _shelfInitiate();
 
-    /// Initialize the receivePort listener.
-    ///   I have no idea how to make this better.
-    receivePort.listen((data) async {
-      if (data case ("requested", dynamic v)) {
-        if (_receiveCompleter != null && !_receiveCompleter!.isCompleted) {
-          _receiveCompleter!.complete(v);
-        } else {
-          throw StateError("No completer was assigned for the received data: $v");
+      /// Initialize the receivePort listener.
+      ///   I have no idea how to make this better.
+      receivePort.listen((data) async {
+        if (data case ("requested", dynamic v)) {
+          if (_receiveCompleter != null && !_receiveCompleter!.isCompleted) {
+            _receiveCompleter!.complete(v);
+          } else {
+            throw StateError("No completer was assigned for the received data: $v");
+          }
         }
-      }
 
-      if (data case ("stop", _)) {
-        await serverInstance.close();
-        receivePort.close();
-        sendPort.send(("confirmClose", null));
-      }
-    });
-    sendPort.send(serverPort);
+        if (data case ("click", int clicks)) {
+          var uri = Uri.parse('http://$parentIp:$parentPort/click');
+          var response = await http.put(uri, body: clicks.toString());
+
+          if (kDebugMode) {
+            print("[PARENT] Updated with result: ${response.body}");
+          }
+        }
+
+        if (data case ("stop", _)) {
+          await serverInstance.close();
+          receivePort.close();
+          sendPort.send(("confirmClose", null));
+        }
+      });
+      sendPort.send(serverPort);
+      sendPort.send(1);
+    } catch (e) {
+      sendPort.send(e);
+    }
   }
 
   /// The router used by the shelf router. Define all routes here.
   late final Router router = Router() //
     ..post("/confirm_parent_device", (Request request) async {
       if (kDebugMode) {
-        return Response.ok(request);
+        print(request.context);
       }
       return Response.ok("Confirmed parent device");
     })
-    ..put("/clickData", (Request request) async {
+    ..put("/click", (Request request) async {
       try {
         int newCount = await request.readAsString().then(int.parse);
 

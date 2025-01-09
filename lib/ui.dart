@@ -119,10 +119,6 @@ class _MyHomePageState extends State<MyHomePage> {
     GlobalState globalState = context.read<GlobalState>();
     globalState.mode.value = DeviceClassification.child;
 
-    GlobalKey<FormState> formKey = GlobalKey<FormState>();
-    TextEditingController ipTextController = TextEditingController();
-    TextEditingController portTextController = TextEditingController();
-
     NetworkInfo network = NetworkInfo();
     String ip = await network.getWifiIP().notNull();
 
@@ -130,93 +126,127 @@ class _MyHomePageState extends State<MyHomePage> {
       return;
     }
 
+    GlobalKey<FormState> formKey = GlobalKey<FormState>();
+    TextEditingController ipTextController = TextEditingController();
+    TextEditingController portTextController = TextEditingController();
+
+    Stream<(String, Object)>? serverStartStream;
+
     await showDialog<void>(
       context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          content: Form(
-            key: formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Row(
-                  children: [
-                    Text("IP: "),
-                    Expanded(
-                      child: TextFormField(
-                        controller: ipTextController,
-                        validator: (String? value) {
-                          if (value == null || value.isEmpty) {
-                            return "Please enter an IP address.";
-                          }
+        return StatefulBuilder(builder: (context, setState) {
+          return AlertDialog(
+            content: Form(
+              key: formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Row(
+                    children: [
+                      Text("IP: "),
+                      Expanded(
+                        child: TextFormField(
+                          controller: ipTextController,
+                          validator: (String? value) {
+                            if (value == null || value.isEmpty) {
+                              return "Please enter an IP address.";
+                            }
 
-                          if (value == ip) {
-                            return "You cannot connect to yourself.";
-                          }
+                            if (value == ip) {
+                              return "You cannot connect to yourself.";
+                            }
 
-                          return null;
-                        },
+                            return null;
+                          },
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                Row(
-                  children: [
-                    Text("Port: "),
-                    Expanded(
-                      child: TextFormField(
-                        controller: portTextController,
-                        validator: (String? value) {
-                          if (value == null || value.isEmpty) {
-                            return "Please enter a port.";
-                          }
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Text("Port: "),
+                      Expanded(
+                        child: TextFormField(
+                          controller: portTextController,
+                          validator: (String? value) {
+                            if (value == null || value.isEmpty) {
+                              return "Please enter a port.";
+                            }
 
-                          if (int.tryParse(value) case null) {
-                            return "Please enter a valid port.";
-                          }
+                            if (int.tryParse(value) case null) {
+                              return "Please enter a valid port.";
+                            }
 
-                          return null;
-                        },
+                            return null;
+                          },
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Button(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                      },
-                      child: Text("Cancel"),
-                    ),
-                    Button(
-                      onPressed: () async {
-                        if (!formKey.currentState!.validate()) {
-                          return;
+                    ],
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Button(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                        },
+                        child: Text("Cancel"),
+                      ),
+                      Button(
+                        onPressed: () async {
+                          if (!formKey.currentState!.validate()) {
+                            return;
+                          }
+
+                          String parentIp = ipTextController.text;
+                          int parentPort = int.parse(portTextController.text);
+
+                          setState(() {
+                            serverStartStream = globalState.hostChild(ip, 0, parentIp, parentPort);
+                          });
+                        },
+                        child: Text("Confirm"),
+                      ),
+                    ],
+                  ),
+                  Expanded(child: const SizedBox()),
+                  if (serverStartStream case Stream<(String, Object)> serverStartStream)
+                    StreamBuilder(
+                      stream: serverStartStream,
+                      builder: (context, snapshot) {
+                        if (snapshot.hasError) {
+                          return Text("Error: ${snapshot.error}");
                         }
 
-                        String ip = ipTextController.text;
-                        int port = int.parse(portTextController.text);
+                        if (snapshot.hasData) {
+                          switch (snapshot.data) {
+                            case ("message", String message):
+                              return Text("Message: $message");
 
-                        globalState.address.value = (ip, port);
+                            /// Error Code 13: Permission denied.
+                            case ("exception", SocketException(osError: OSError(errorCode: 13))):
+                              return Text(
+                                "Permission denied. Either the port is already in use"
+                                " or you don't have permission to use it.",
+                                style: TextStyle(color: Colors.red),
+                              );
+                            case ("done", _):
+                              Navigator.of(context).pop();
+                              return const SizedBox();
+                          }
+                        }
 
-                        if (!context.mounted) return;
-                        Navigator.of(context).pop();
+                        return const CircularProgressIndicator();
                       },
-                      child: Text("Confirm"),
                     ),
-                  ],
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        );
+          );
+        });
       },
     );
-
-    ipTextController.dispose();
-    portTextController.dispose();
   }
 
   Future<void> _parentPressed() async {
@@ -306,9 +336,6 @@ class _MyHomePageState extends State<MyHomePage> {
                           }
 
                           String ip = ipTextController.text;
-                          setState(() {
-                            serverStartStream = null;
-                          });
                           int port = int.parse(portTextController.text);
 
                           setState(() {

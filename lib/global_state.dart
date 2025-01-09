@@ -75,13 +75,15 @@ class GlobalState {
 
       yield ("message", "Starting server at http://$ip:$port");
       await Future.delayed(Duration(seconds: 1));
-      _currentServer = ShelfChildServer(this, ip, port);
+      _currentServer = ShelfChildServer(this, ip, parentIp, parentPort);
+
       await _currentServer!.startServer();
+      port = _currentServer!.port;
       yield ("message", "Started server at http://$ip:$port");
       await Future.delayed(Duration(seconds: 1));
 
       yield ("message", "Handshaking with the parent device at http://$parentIp:$parentPort");
-      await _childHandshake(parentIp, parentPort);
+      await _childHandshake(ip, port, parentIp, parentPort);
       yield ("message", "Handshaked with the parent device at http://$parentIp:$parentPort");
       await Future.delayed(Duration(seconds: 1));
       yield ("done", "Connection established");
@@ -96,8 +98,14 @@ class GlobalState {
 
   ShelfServer? _currentServer;
 
-  Future<void> _childHandshake(String ip, int port) async {
-    final response = await http.get(Uri.parse("http://$ip:$port/handshake"));
+  Future<void> _childHandshake(String ip, int port, String parentIp, int parentPort) async {
+    Uri uri = Uri.parse("http://$parentIp:$parentPort/register_child_device/$ip/$port");
+    http.Response response = await http.post(uri);
+
+    if (kDebugMode) {
+      print("[CHILD] Handshake: ${response.statusCode} ${response.body}");
+    }
+
     if (response.statusCode != 200) {
       throw Exception("Failed to handshake with the parent device.");
     }

@@ -127,7 +127,7 @@ class _MyHomePageState extends State<MyHomePage> {
     }
 
     GlobalKey<FormState> formKey = GlobalKey<FormState>();
-    TextEditingController ipTextController = TextEditingController();
+    TextEditingController ipTextController = TextEditingController()..text = "192.168";
     TextEditingController portTextController = TextEditingController();
 
     Stream<(String, Object)>? serverStartStream;
@@ -147,6 +147,7 @@ class _MyHomePageState extends State<MyHomePage> {
                       Text("IP: "),
                       Expanded(
                         child: TextFormField(
+                          autofocus: true,
                           controller: ipTextController,
                           validator: (String? value) {
                             if (value == null || value.isEmpty) {
@@ -304,6 +305,7 @@ class _MyHomePageState extends State<MyHomePage> {
                       Text("Port: "),
                       Expanded(
                         child: TextFormField(
+                          autofocus: true,
                           controller: portTextController,
                           validator: (String? value) {
                             if (value == null || value.isEmpty) {

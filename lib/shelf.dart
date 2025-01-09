@@ -24,7 +24,7 @@ sealed class ShelfServer {
   Completer<int> get closeCompleter;
 }
 
-class ShelfParentServer implements ShelfServer {
+final class ShelfParentServer implements ShelfServer {
   @override
   final String ip;
 
@@ -143,7 +143,7 @@ class ShelfParentServer implements ShelfServer {
   }
 }
 
-class _IsolatedParentServer {
+final class _IsolatedParentServer {
   /// A catcher of sorts for the receivePort listener.
   /// Whenever we request something from the main isolate, we must assign a completer BEFOREHAND.
   Completer<dynamic>? _receiveCompleter;
@@ -183,14 +183,19 @@ class _IsolatedParentServer {
             print("[PARENT] Received click data: $clicks");
             print("[PARENT] There are currently child devices with IPs $_childDevices");
           }
-          List<http.Response> results = await Future.wait([
-            for (var (ip, port) in _childDevices)
-              if (Uri.parse('http://$ip:$port/click') case var uri)
-                http.put(uri, body: clicks.toString()),
-          ]);
+
+          for (var (ip, port) in _childDevices) {
+            try {
+              var uri = Uri.parse('http://$ip:$port/click');
+
+              await http.put(uri, body: clicks.toString());
+            } on http.ClientException {
+              _childDevices.remove((ip, port));
+            }
+          }
 
           if (kDebugMode) {
-            print("[PARENT] Updated with result: $results");
+            print("[PARENT] Updated with result.");
           }
         }
 
@@ -275,7 +280,7 @@ class _IsolatedParentServer {
   }
 }
 
-class ShelfChildServer implements ShelfServer {
+final class ShelfChildServer implements ShelfServer {
   @override
   final String ip;
 
@@ -307,12 +312,10 @@ class ShelfChildServer implements ShelfServer {
         case ("syncClicks", int newCount):
           _clicksLock = true;
           globalState.counter.value = newCount;
-          serverSendPort.send(true);
           _clicksLock = false;
           break;
         case ("newClicks", int newCount):
           globalState.counter.value = newCount;
-          serverSendPort.send(true);
           break;
         case ("confirmClose", _):
           closeCompleter.complete(0);
@@ -409,7 +412,7 @@ class ShelfChildServer implements ShelfServer {
   }
 }
 
-class _IsolatedChildServer {
+final class _IsolatedChildServer {
   final String parentIp;
   final int parentPort;
 
@@ -435,7 +438,13 @@ class _IsolatedChildServer {
       /// Initialize the receivePort listener.
       ///   I have no idea how to make this better.
       receivePort.listen((data) async {
-        if (data case ("requested", dynamic v)) {
+        assert(
+          data is (String, Object?),
+          "Each received data must have an identifier."
+          "However, the received data was: $data",
+        );
+
+        if (data case ("requested", Object? v)) {
           if (_receiveCompleter != null && !_receiveCompleter!.isCompleted) {
             _receiveCompleter!.complete(v);
           } else {

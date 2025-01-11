@@ -18,8 +18,6 @@ class ExampleApplication extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    (_) = TextButton.styleFrom();
-
     return FluentApp(
       title: "Flutter Demo",
       debugShowCheckedModeBanner: false,
@@ -31,76 +29,136 @@ class ExampleApplication extends StatelessWidget {
         children: [
           const NavigationBar(),
           Expanded(
-            child: MenuBarWidget(
-              barStyle: const MenuStyle(
-                padding: WidgetStatePropertyAll(EdgeInsets.zero),
-                backgroundColor: WidgetStatePropertyAll(Colors.white),
-                shape: WidgetStatePropertyAll(RoundedRectangleBorder()),
-              ),
+            child: Builder(
+              builder: (context) {
+                Widget app = const MyHomePage();
 
-              barButtonStyle: ButtonStyle(
-                textStyle: const WidgetStatePropertyAll(TextStyle()),
-                backgroundColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.hovered)) {
-                    return Colors.black.withValues(alpha: 0.05);
-                  }
-                  return Colors.white;
-                }),
-                minimumSize: const WidgetStatePropertyAll(Size.zero),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              menuButtonStyle: const ButtonStyle(
-                textStyle: WidgetStatePropertyAll(TextStyle()),
-                padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12.0)),
-                backgroundColor: WidgetStatePropertyAll(Colors.white),
-                minimumSize: WidgetStatePropertyAll(Size.zero),
-                iconSize: WidgetStatePropertyAll(16.0),
-              ),
-              // The buttons in this List are displayed as the buttons on the bar itself
-              barButtons: [
-                BarButton(
-                  text: const Text("File"),
-                  submenu: SubMenu(
-                    menuItems: [
-                      MenuButton(
-                        text: const Text("Open"),
-                        onTap: () async {
-                          if (kDebugMode) {
-                            print("Opening a file.");
-                          }
-
-                          var result = await FilePicker.platform.pickFiles();
-                          if (result == null) {
-                            return;
-                          }
-
-                          if (kDebugMode) {
-                            print(result.names);
-                          }
-                        },
-                        shortcutText: "Ctrl+O",
+                if (Platform.isMacOS) {
+                  app = PlatformMenuBar(
+                    menus: [
+                      PlatformMenu(
+                        label: "The first menu.",
+                        menus: [
+                          /// Apparently, if the first menu is empty,
+                          ///   the application name is not displayed.
+                          PlatformMenuItem(
+                            label: "About",
+                            onSelected: () {},
+                          ),
+                        ],
                       ),
-                      MenuButton(
-                        text: const Text("Exit"),
-                        onTap: () {},
-                        shortcutText: "Ctrl+Q",
+                      PlatformMenu(
+                        label: "File",
+                        menus: [
+                          PlatformMenuItemGroup(
+                            members: <PlatformMenuItem>[
+                              PlatformMenuItem(
+                                label: "Open",
+                                onSelected: () async {
+                                  if (kDebugMode) {
+                                    print("Opening a file.");
+                                  }
+
+                                  var result = await FilePicker.platform.pickFiles();
+                                  if (result == null) {
+                                    return;
+                                  }
+
+                                  if (kDebugMode) {
+                                    print(result.names);
+                                  }
+                                },
+                              ),
+                              PlatformMenuItem(
+                                label: "Exit",
+                                onSelected: () {
+                                  if (kDebugMode) {
+                                    print("Hi");
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
                     ],
-                  ),
-                ),
-                BarButton(
-                  text: const Text("Help"),
-                  submenu: SubMenu(
-                    menuItems: [
-                      MenuButton(
-                        text: const Text("About"),
-                        onTap: () {},
+                    child: app,
+                  );
+                } else if (Platform.isWindows) {
+                  app = MenuBarWidget(
+                    barStyle: const MenuStyle(
+                      padding: WidgetStatePropertyAll(EdgeInsets.zero),
+                      backgroundColor: WidgetStatePropertyAll(Colors.white),
+                      shape: WidgetStatePropertyAll(RoundedRectangleBorder()),
+                    ),
+                    barButtonStyle: ButtonStyle(
+                      textStyle: const WidgetStatePropertyAll(TextStyle()),
+                      backgroundColor: WidgetStateProperty.resolveWith((states) {
+                        if (states.contains(WidgetState.hovered)) {
+                          return Colors.black.withValues(alpha: 0.05);
+                        }
+                        return Colors.white;
+                      }),
+                      minimumSize: const WidgetStatePropertyAll(Size.zero),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    menuButtonStyle: const ButtonStyle(
+                      textStyle: WidgetStatePropertyAll(TextStyle()),
+                      padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12.0)),
+                      backgroundColor: WidgetStatePropertyAll(Colors.white),
+                      minimumSize: WidgetStatePropertyAll(Size.zero),
+                      iconSize: WidgetStatePropertyAll(16.0),
+                    ),
+                    // The buttons in this List are displayed as the buttons on the bar itself
+                    barButtons: [
+                      BarButton(
+                        text: const Text("File"),
+                        submenu: SubMenu(
+                          menuItems: [
+                            MenuButton(
+                              text: const Text("Open"),
+                              onTap: () async {
+                                if (kDebugMode) {
+                                  print("Opening a file.");
+                                }
+
+                                var result = await FilePicker.platform.pickFiles();
+                                if (result == null) {
+                                  return;
+                                }
+
+                                if (kDebugMode) {
+                                  print(result.names);
+                                }
+                              },
+                              shortcutText: "Ctrl+O",
+                            ),
+                            MenuButton(
+                              text: const Text("Exit"),
+                              onTap: () {},
+                              shortcutText: "Ctrl+Q",
+                            ),
+                          ],
+                        ),
+                      ),
+                      BarButton(
+                        text: const Text("Help"),
+                        submenu: SubMenu(
+                          menuItems: [
+                            MenuButton(
+                              text: const Text("About"),
+                              onTap: () {},
+                            ),
+                          ],
+                        ),
                       ),
                     ],
-                  ),
-                ),
-              ],
-              child: const MyHomePage(),
+                    child: app,
+                  );
+                }
+
+                return app;
+              },
             ),
           ),
         ],
@@ -136,36 +194,53 @@ class NavigationBar extends StatelessWidget {
       child: WindowTitleBarBox(
         child: ColoredBox(
           color: Colors.white,
-          child: Row(
-            children: [
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8.0),
-                child: Icon(Symbols.flutter),
-              ),
-              const Text(
-                "Application Server",
-                style: TextStyle(
-                  fontFamily: "Segoe UI",
-                  fontSize: 12.0,
-                ),
-              ),
-              const Expanded(child: SizedBox()),
-              MinimizeWindowButton(colors: buttonColors, animate: true),
-              MaximizeOrRestoreButton(colors: buttonColors, animate: true),
-              CloseWindowButton(
-                colors: closeButtonColors,
-                animate: true,
-                onPressed: () async {
-                  if (kDebugMode) {
-                    print("Closing the window.");
-                  }
+          child: Platform.isMacOS
+              // For macOS, we can't override the title bar.
+              ? const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Padding(
+                      padding: EdgeInsets.only(right: 8.0),
+                      child: Icon(Symbols.flutter),
+                    ),
+                    Text(
+                      "Application Server",
+                      style: TextStyle(
+                        fontSize: 12.0,
+                      ),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8.0),
+                      child: Icon(Symbols.flutter),
+                    ),
+                    const Text(
+                      "Application Server",
+                      style: TextStyle(
+                        fontFamily: "Segoe UI",
+                        fontSize: 12.0,
+                      ),
+                    ),
+                    const Expanded(child: SizedBox()),
+                    MinimizeWindowButton(colors: buttonColors, animate: true),
+                    MaximizeOrRestoreButton(colors: buttonColors, animate: true),
+                    CloseWindowButton(
+                      colors: closeButtonColors,
+                      animate: true,
+                      onPressed: () async {
+                        if (kDebugMode) {
+                          print("Closing the window.");
+                        }
 
-                  await context.read<GlobalState>().closeServer();
-                  appWindow.close();
-                },
-              ),
-            ],
-          ),
+                        await context.read<GlobalState>().closeServer();
+                        appWindow.close();
+                      },
+                    ),
+                  ],
+                ),
         ),
       ),
     );

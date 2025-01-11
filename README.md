@@ -1,16 +1,11 @@
 # application_server
 
-A new Flutter project.
+A Flutter project that experiments with concepts:
+  1. Desktop Application
+  2. (Local) Server Hosting
+  3. Desktop packages.
 
-## Getting Started
+## Package Installation notes:
 
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+1. For `bitsdojo_window`, setup on each OS supported is required:
+  - See [pub.dev/bitsdojo_window](https://pub.dev/packages/bitsdojo_window) for the complete setup.

@@ -38,18 +38,33 @@ class NavigationBar extends StatelessWidget {
           color: Colors.white,
           child: Platform.isMacOS
               // For macOS, we can't override the title bar.
-              ? const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
+              //   01/12/2025: We can now override the title bar on macOS using the tandem of the `bitsdojo_window` and `macos_window_utils` packages. However, the buttons are not available on macOS, and we a custom implementation of the buttons might be needed.
+              ? Stack(
                   children: [
-                    Padding(
-                      padding: EdgeInsets.only(right: 8.0),
-                      child: Icon(Symbols.flutter),
+                    const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Padding(
+                          padding: EdgeInsets.only(right: 8.0),
+                          child: Icon(Symbols.flutter),
+                        ),
+                        Text(
+                          "Application Server",
+                          style: TextStyle(
+                            fontSize: 12.0,
+                          ),
+                        ),
+                      ],
                     ),
-                    Text(
-                      "Application Server",
-                      style: TextStyle(
-                        fontSize: 12.0,
-                      ),
+                    IconButton(
+                      icon: Icon(Symbols.minimize, color: Colors.red),
+                      onPressed: () {
+                        if (kDebugMode) {
+                          print("Minimized!");
+
+                          appWindow.minimize();
+                        }
+                      },
                     ),
                   ],
                 )

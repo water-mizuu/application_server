@@ -2,24 +2,22 @@ import "dart:io";
 
 import "package:application_server/future_not_null.dart";
 import "package:application_server/global_state.dart";
-import "package:bitsdojo_window/bitsdojo_window.dart";
+import "package:application_server/navigation_bar.dart";
 import "package:file_picker/file_picker.dart";
 import "package:fluent_ui/fluent_ui.dart" hide ButtonStyle;
 import "package:flutter/foundation.dart";
-import "package:flutter/material.dart" hide Colors, Divider, showDialog;
-import "package:material_symbols_icons/symbols.dart";
+import "package:flutter/material.dart" hide Colors, Divider, NavigationBar, showDialog;
 import "package:menu_bar/menu_bar.dart";
 import "package:network_info_plus/network_info_plus.dart";
 import "package:provider/provider.dart";
 import "package:system_theme/system_theme.dart";
 
-class ExampleApplication extends StatelessWidget {
-  const ExampleApplication({super.key});
+class ApplicationWindow extends StatelessWidget {
+  const ApplicationWindow({super.key});
 
   @override
   Widget build(BuildContext context) {
     return FluentApp(
-      title: "Flutter Demo",
       debugShowCheckedModeBanner: false,
       theme: FluentThemeData(
         accentColor: SystemTheme.accentColor.accent.toAccentColor(),
@@ -31,9 +29,14 @@ class ExampleApplication extends StatelessWidget {
           Expanded(
             child: Builder(
               builder: (context) {
-                Widget app = const MyHomePage();
+                Widget app = Provider(
+                  create: (_) => GlobalState(),
+                  dispose: (_, state) async => await state.dispose(),
+                  child: const MyHomePage(),
+                );
 
                 if (Platform.isMacOS) {
+                  /// This is the macOS menu bar.
                   app = PlatformMenuBar(
                     menus: [
                       PlatformMenu(
@@ -85,6 +88,7 @@ class ExampleApplication extends StatelessWidget {
                     child: app,
                   );
                 } else if (Platform.isWindows) {
+                  /// This is the Windows menu bar.
                   app = MenuBarWidget(
                     barStyle: const MenuStyle(
                       padding: WidgetStatePropertyAll(EdgeInsets.zero),
@@ -163,115 +167,6 @@ class ExampleApplication extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class NavigationBar extends StatelessWidget {
-  const NavigationBar({super.key});
-
-  static final buttonColors = WindowButtonColors(
-    iconNormal: const Color(0xFF000000),
-    mouseOver: const Color(0x22000000),
-    mouseDown: const Color(0x33000000),
-    iconMouseOver: const Color(0xAA000000),
-    iconMouseDown: const Color(0xBB000000),
-  );
-
-  static final closeButtonColors = WindowButtonColors(
-    mouseOver: const Color(0xFFD32F2F),
-    mouseDown: const Color(0xFFB71C1C),
-    iconNormal: const Color(0xFF000000),
-    iconMouseOver: Colors.white,
-  );
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onPanStart: (details) {
-        appWindow.startDragging();
-      },
-      child: WindowTitleBarBox(
-        child: ColoredBox(
-          color: Colors.white,
-          child: Platform.isMacOS
-              // For macOS, we can't override the title bar.
-              ? const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Padding(
-                      padding: EdgeInsets.only(right: 8.0),
-                      child: Icon(Symbols.flutter),
-                    ),
-                    Text(
-                      "Application Server",
-                      style: TextStyle(
-                        fontSize: 12.0,
-                      ),
-                    ),
-                  ],
-                )
-              : Row(
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 8.0),
-                      child: Icon(Symbols.flutter),
-                    ),
-                    const Text(
-                      "Application Server",
-                      style: TextStyle(
-                        fontFamily: "Segoe UI",
-                        fontSize: 12.0,
-                      ),
-                    ),
-                    const Expanded(child: SizedBox()),
-                    MinimizeWindowButton(colors: buttonColors, animate: true),
-                    MaximizeOrRestoreButton(colors: buttonColors, animate: true),
-                    CloseWindowButton(
-                      colors: closeButtonColors,
-                      animate: true,
-                      onPressed: () async {
-                        if (kDebugMode) {
-                          print("Closing the window.");
-                        }
-
-                        await context.read<GlobalState>().closeServer();
-                        appWindow.close();
-                      },
-                    ),
-                  ],
-                ),
-        ),
-      ),
-    );
-  }
-}
-
-class MaximizeOrRestoreButton extends StatelessWidget {
-  const MaximizeOrRestoreButton({
-    required this.colors,
-    this.onPressed,
-    this.animate = false,
-    super.key,
-  });
-
-  final WindowButtonColors colors;
-  final VoidCallback? onPressed;
-  final bool animate;
-
-  @override
-  Widget build(BuildContext context) {
-    MediaQuery.sizeOf(context);
-
-    return WindowButton(
-      colors: colors,
-      iconBuilder: (context) {
-        return appWindow.isMaximized
-            ? RestoreIcon(color: colors.iconNormal)
-            : MaximizeIcon(color: colors.iconNormal);
-      },
-      onPressed: onPressed ?? () => appWindow.maximizeOrRestore(),
-      animate: animate,
     );
   }
 }

@@ -1,11 +1,13 @@
 import "dart:async";
 import "dart:io";
 
+import "package:application_server/global_state.dart";
 import "package:application_server/ui.dart";
 import "package:bitsdojo_window/bitsdojo_window.dart";
 import "package:fluent_ui/fluent_ui.dart";
 import "package:flutter/material.dart";
 import "package:macos_window_utils/window_manipulator.dart";
+import "package:provider/provider.dart";
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,7 +18,15 @@ Future<void> main() async {
   }
 
   /// The only shared state between the main isolate and the server isolate.
-  runApp(const ApplicationWindow());
+  var globalState = GlobalState();
+  await globalState.initialize();
+
+  runApp(
+    Provider.value(
+      value: globalState,
+      child: const ApplicationWindow(),
+    ),
+  );
 
   doWhenWindowReady(() {
     const initialSize = Size(600, 450);

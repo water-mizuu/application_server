@@ -1,3 +1,4 @@
+import "dart:async";
 import "dart:io";
 
 import "package:application_server/future_not_null.dart";
@@ -12,52 +13,167 @@ import "package:network_info_plus/network_info_plus.dart";
 import "package:provider/provider.dart";
 import "package:system_theme/system_theme.dart";
 
-class ApplicationWindow extends StatelessWidget {
+class ApplicationWindow extends StatefulWidget {
   const ApplicationWindow({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return FluentApp(
-      debugShowCheckedModeBanner: false,
-      theme: FluentThemeData(
-        accentColor: SystemTheme.accentColor.accent.toAccentColor(),
-        fontFamily: "Segoe UI",
-      ),
-      home: Column(
-        children: [
-          const NavigationBar(),
-          Expanded(
-            child: Builder(
-              builder: (context) {
-                Widget app = Provider(
-                  create: (_) => GlobalState(),
-                  dispose: (_, state) async => await state.dispose(),
-                  child: const MyHomePage(),
-                );
+  State<ApplicationWindow> createState() => _ApplicationWindowState();
+}
 
-                if (Platform.isMacOS) {
-                  /// This is the macOS menu bar.
-                  app = PlatformMenuBar(
-                    menus: [
-                      PlatformMenu(
-                        label: "The first menu.",
-                        menus: [
-                          /// Apparently, if the first menu is empty,
-                          ///   the application name is not displayed.
-                          PlatformMenuItem(
-                            label: "About",
-                            onSelected: () {},
-                          ),
-                        ],
+class _ApplicationWindowState extends State<ApplicationWindow> {
+  late final AppLifecycleListener _listener;
+
+  bool _exit = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _listener = AppLifecycleListener(
+      binding: WidgetsBinding.instance,
+      onInactive: () {
+        if (kDebugMode) {
+          print("On inactive");
+        }
+
+        _exit = true;
+        Future.delayed(const Duration(milliseconds: 250), () {
+          _exit = false;
+        });
+      },
+      onHide: () {
+        if (kDebugMode) {
+          print("On hide");
+        }
+
+        if (_exit) {
+          if (kDebugMode) {
+            print("We probably exited.");
+          }
+
+          _exit = false;
+        }
+      },
+      onStateChange: (value) {
+        if (kDebugMode) {
+          print("The state changed to $value");
+        }
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _listener.dispose();
+
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Provider(
+      create: (_) => GlobalState(),
+      dispose: (_, state) async => await state.dispose(),
+      child: FluentApp(
+        debugShowCheckedModeBanner: false,
+        theme: FluentThemeData(
+          accentColor: SystemTheme.accentColor.accent.toAccentColor(),
+          fontFamily: "Segoe UI",
+        ),
+        home: Column(
+          children: [
+            const NavigationBar(),
+            Expanded(
+              child: Builder(
+                builder: (context) {
+                  var app = const MyHomePage() as Widget;
+
+                  if (Platform.isMacOS) {
+                    /// This is the macOS menu bar.
+                    app = PlatformMenuBar(
+                      menus: [
+                        PlatformMenu(
+                          label: "The first menu.",
+                          menus: [
+                            /// Apparently, if the first menu is empty,
+                            ///   the application name is not displayed.
+                            PlatformMenuItem(
+                              label: "About",
+                              onSelected: () {},
+                            ),
+                          ],
+                        ),
+                        PlatformMenu(
+                          label: "File",
+                          menus: [
+                            PlatformMenuItemGroup(
+                              members: <PlatformMenuItem>[
+                                PlatformMenuItem(
+                                  label: "Open",
+                                  onSelected: () async {
+                                    if (kDebugMode) {
+                                      print("Opening a file.");
+                                    }
+
+                                    var result = await FilePicker.platform.pickFiles();
+                                    if (result == null) {
+                                      return;
+                                    }
+
+                                    if (kDebugMode) {
+                                      print(result.names);
+                                    }
+                                  },
+                                ),
+                                PlatformMenuItem(
+                                  label: "Exit",
+                                  onSelected: () {
+                                    if (kDebugMode) {
+                                      print("Hi");
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ],
+                      child: app,
+                    );
+                  } else if (Platform.isWindows) {
+                    /// This is the Windows menu bar.
+                    app = MenuBarWidget(
+                      barStyle: const MenuStyle(
+                        padding: WidgetStatePropertyAll(EdgeInsets.zero),
+                        backgroundColor: WidgetStatePropertyAll(Colors.white),
+                        shape: WidgetStatePropertyAll(RoundedRectangleBorder()),
                       ),
-                      PlatformMenu(
-                        label: "File",
-                        menus: [
-                          PlatformMenuItemGroup(
-                            members: <PlatformMenuItem>[
-                              PlatformMenuItem(
-                                label: "Open",
-                                onSelected: () async {
+                      barButtonStyle: ButtonStyle(
+                        textStyle: const WidgetStatePropertyAll(TextStyle()),
+                        backgroundColor: WidgetStateProperty.resolveWith((states) {
+                          if (states.contains(WidgetState.hovered)) {
+                            return Colors.black.withValues(alpha: 0.05);
+                          }
+                          return Colors.white;
+                        }),
+                        minimumSize: const WidgetStatePropertyAll(Size.zero),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      menuButtonStyle: const ButtonStyle(
+                        textStyle: WidgetStatePropertyAll(TextStyle()),
+                        padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12.0)),
+                        backgroundColor: WidgetStatePropertyAll(Colors.white),
+                        minimumSize: WidgetStatePropertyAll(Size.zero),
+                        iconSize: WidgetStatePropertyAll(16.0),
+                      ),
+                      // The buttons in this List are displayed as the buttons on the bar itself
+                      barButtons: [
+                        BarButton(
+                          text: const Text("File"),
+                          submenu: SubMenu(
+                            menuItems: [
+                              MenuButton(
+                                text: const Text("Open"),
+                                onTap: () async {
                                   if (kDebugMode) {
                                     print("Opening a file.");
                                   }
@@ -71,101 +187,38 @@ class ApplicationWindow extends StatelessWidget {
                                     print(result.names);
                                   }
                                 },
+                                shortcutText: "Ctrl+O",
                               ),
-                              PlatformMenuItem(
-                                label: "Exit",
-                                onSelected: () {
-                                  if (kDebugMode) {
-                                    print("Hi");
-                                  }
-                                },
+                              MenuButton(
+                                text: const Text("Exit"),
+                                onTap: () {},
+                                shortcutText: "Ctrl+Q",
                               ),
                             ],
                           ),
-                        ],
-                      ),
-                    ],
-                    child: app,
-                  );
-                } else if (Platform.isWindows) {
-                  /// This is the Windows menu bar.
-                  app = MenuBarWidget(
-                    barStyle: const MenuStyle(
-                      padding: WidgetStatePropertyAll(EdgeInsets.zero),
-                      backgroundColor: WidgetStatePropertyAll(Colors.white),
-                      shape: WidgetStatePropertyAll(RoundedRectangleBorder()),
-                    ),
-                    barButtonStyle: ButtonStyle(
-                      textStyle: const WidgetStatePropertyAll(TextStyle()),
-                      backgroundColor: WidgetStateProperty.resolveWith((states) {
-                        if (states.contains(WidgetState.hovered)) {
-                          return Colors.black.withValues(alpha: 0.05);
-                        }
-                        return Colors.white;
-                      }),
-                      minimumSize: const WidgetStatePropertyAll(Size.zero),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    menuButtonStyle: const ButtonStyle(
-                      textStyle: WidgetStatePropertyAll(TextStyle()),
-                      padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12.0)),
-                      backgroundColor: WidgetStatePropertyAll(Colors.white),
-                      minimumSize: WidgetStatePropertyAll(Size.zero),
-                      iconSize: WidgetStatePropertyAll(16.0),
-                    ),
-                    // The buttons in this List are displayed as the buttons on the bar itself
-                    barButtons: [
-                      BarButton(
-                        text: const Text("File"),
-                        submenu: SubMenu(
-                          menuItems: [
-                            MenuButton(
-                              text: const Text("Open"),
-                              onTap: () async {
-                                if (kDebugMode) {
-                                  print("Opening a file.");
-                                }
-
-                                var result = await FilePicker.platform.pickFiles();
-                                if (result == null) {
-                                  return;
-                                }
-
-                                if (kDebugMode) {
-                                  print(result.names);
-                                }
-                              },
-                              shortcutText: "Ctrl+O",
-                            ),
-                            MenuButton(
-                              text: const Text("Exit"),
-                              onTap: () {},
-                              shortcutText: "Ctrl+Q",
-                            ),
-                          ],
                         ),
-                      ),
-                      BarButton(
-                        text: const Text("Help"),
-                        submenu: SubMenu(
-                          menuItems: [
-                            MenuButton(
-                              text: const Text("About"),
-                              onTap: () {},
-                            ),
-                          ],
+                        BarButton(
+                          text: const Text("Help"),
+                          submenu: SubMenu(
+                            menuItems: [
+                              MenuButton(
+                                text: const Text("About"),
+                                onTap: () {},
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
-                    child: app,
-                  );
-                }
+                      ],
+                      child: app,
+                    );
+                  }
 
-                return app;
-              },
+                  return app;
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -190,50 +243,36 @@ class _MyHomePageState extends State<MyHomePage> {
           children: [
             ValueListenableBuilder(
               valueListenable: globalState.mode,
-              builder: (context, value, child) =>
-                  Text("You are currently ${globalState.mode.value}"),
+              builder: (_, value, __) => Text("You are currently $value"),
             ),
             ValueListenableBuilder(
               valueListenable: globalState.address,
-              builder: (context, value, child) {
-                if (value == null) {
-                  return const SizedBox();
-                }
-
-                var (ip, port) = value;
-                return Text("Currently hosting at http://$ip:$port");
+              builder: (_, value, __) => switch (value) {
+                null => const SizedBox(),
+                (var ip, var port) => Text("Currently hosting at http://$ip:$port"),
               },
             ),
             ValueListenableBuilder(
               valueListenable: globalState.parentAddress,
-              builder: (context, value, child) {
-                if (value == null) {
-                  return const SizedBox();
-                }
-
-                var (String ip, int port) = value;
-                return Text("Currently connected to http://$ip:$port");
+              builder: (_, value, __) => switch (value) {
+                null => const SizedBox(),
+                (var ip, var port) => Text("Currently connected to http://$ip:$port"),
               },
             ),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Button(
-                  onPressed: _childPressed,
-                  child: const Text("Child"),
-                ),
-                Button(
-                  onPressed: _parentPressed,
-                  child: const Text("Parent"),
-                ),
+                Button(onPressed: _childPressed, child: const Text("Child")),
+                Button(onPressed: _parentPressed, child: const Text("Parent")),
               ],
             ),
             ValueListenableBuilder(
               valueListenable: globalState.mode,
-              builder: (context, value, _) => Button(
-                onPressed: value == DeviceClassification.unspecified //
-                    ? null
-                    : globalState.closeServer,
+              builder: (_, value, __) => Button(
+                onPressed: switch (value) {
+                  DeviceClassification.unspecified => null,
+                  _ => _clearPressed,
+                },
                 child: const Text("Close"),
               ),
             ),
@@ -247,12 +286,10 @@ class _MyHomePageState extends State<MyHomePage> {
                     ),
                     ValueListenableBuilder(
                       valueListenable: globalState.counter,
-                      builder: (context, value, child) {
-                        return Text(
-                          "$value",
-                          style: Theme.of(context).textTheme.headlineMedium,
-                        );
-                      },
+                      builder: (_, value, __) => Text(
+                        "$value",
+                        style: Theme.of(context).textTheme.headlineMedium,
+                      ),
                     ),
                     Button(
                       onPressed: () {
@@ -273,7 +310,6 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<void> _childPressed() async {
     var context = this.context;
     var globalState = context.read<GlobalState>();
-    globalState.mode.value = DeviceClassification.child;
 
     var network = NetworkInfo();
     var ip = await network.getWifiIP().notNull();
@@ -364,9 +400,14 @@ class _MyHomePageState extends State<MyHomePage> {
                             var parentPort = int.parse(portTextController.text);
 
                             setState(() {
-                              serverStartStream =
-                                  globalState.hostChild(ip, 0, parentIp, parentPort);
+                              serverStartStream = globalState
+                                  .hostChild(ip, 0, parentIp, parentPort)
+                                  .asBroadcastStream();
                             });
+
+                            if (await serverStartStream?.drain<void>() case _?) {
+                              globalState.mode.value = DeviceClassification.child;
+                            }
                           },
                           child: const Text("Confirm"),
                         ),
@@ -393,12 +434,22 @@ class _MyHomePageState extends State<MyHomePage> {
                                   " or you don't have permission to use it.",
                                   style: TextStyle(color: Colors.red),
                                 );
+                              case ("timeout_exception", TimeoutException()):
+                                return Text(
+                                  "Connection timed out. This means that something went wrong while trying to connect to the parent device. Please check the IP address and the port.",
+                                  style: TextStyle(color: Colors.red),
+                                );
+                              case ("exception", SocketException(:var message)):
+                                return Text(
+                                  "Something went wrong. $message",
+                                  style: TextStyle(color: Colors.red),
+                                );
                               case ("done", _):
                                 Navigator.of(context).pop();
+
                                 return const SizedBox();
                             }
                           }
-
                           return const CircularProgressIndicator();
                         },
                       ),
@@ -507,8 +558,13 @@ class _MyHomePageState extends State<MyHomePage> {
                             var port = int.parse(portTextController.text);
 
                             setState(() {
-                              serverStartStream = globalState.hostParent(ip, port);
+                              serverStartStream = globalState //
+                                  .hostParent(ip, port)
+                                  .asBroadcastStream();
                             });
+                            if (await serverStartStream?.drain<void>() case _?) {
+                              globalState.mode.value = DeviceClassification.child;
+                            }
                           },
                           child: const Text("Confirm"),
                         ),
@@ -535,6 +591,15 @@ class _MyHomePageState extends State<MyHomePage> {
                                   " or you don't have permission to use it.",
                                   style: TextStyle(color: Colors.red),
                                 );
+                              case ("timeout_exception", TimeoutException(:var message)):
+                                if (message case String message) {
+                                  return Text(
+                                    "Timeout: $message",
+                                    style: TextStyle(color: Colors.red),
+                                  );
+                                } else {
+                                  return Text("Timeout", style: TextStyle(color: Colors.red));
+                                }
                               case ("done", _):
                                 Navigator.of(context).pop();
                                 return const SizedBox();
@@ -552,5 +617,14 @@ class _MyHomePageState extends State<MyHomePage> {
         );
       },
     );
+  }
+
+  Future<void> _clearPressed() async {
+    var globalState = context.read<GlobalState>();
+
+    await globalState.closeServer();
+
+    globalState.mode.value = DeviceClassification.unspecified;
+    globalState.counter.value = 0;
   }
 }

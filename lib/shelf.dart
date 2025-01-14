@@ -4,6 +4,7 @@ import "dart:isolate";
 
 import "package:application_server/future_not_null.dart";
 import "package:application_server/global_state.dart";
+import "package:application_server/playground_parallelism.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/services.dart";
 import "package:http/http.dart" as http;
@@ -188,7 +189,7 @@ final class _IsolatedParentServer {
             print("[PARENT] There are currently child devices with IPs $_childDevices");
           }
 
-          for (var (ip, port) in _childDevices) {
+          for (var (ip, port) in _childDevices.toList()) {
             try {
               var uri = Uri.parse("http://$ip:$port/click");
 
@@ -287,7 +288,7 @@ final class _IsolatedParentServer {
 
 final class ShelfChildServer implements ShelfServer {
   ShelfChildServer(this.globalState, this.ip, this.parentIp, this.parentPort) {
-    receivePort.listen((message) {
+    receivePort.listen((message) async {
       switch (message) {
         case ("syncClicks", int newCount):
           _clicksLock = true;
@@ -295,6 +296,14 @@ final class ShelfChildServer implements ShelfServer {
           _clicksLock = false;
         case ("newClicks", int newCount):
           globalState.counter.value = newCount;
+        case ("unregisterParent", _):
+          if (kDebugMode) {
+            print("The parent has unregistered the child device.");
+          }
+          globalState.mode.value = DeviceClassification.unspecified;
+          globalState.parentAddress.value = null;
+
+          await stopServer();
         case ("confirmClose", _):
           closeCompleter.complete(0);
         case _:
@@ -337,53 +346,39 @@ final class ShelfChildServer implements ShelfServer {
     assert(RootIsolateToken.instance != null, "This should be run in the root isolate.");
     var rootIsolateToken = RootIsolateToken.instance!;
 
-    var setupReceivePort = ReceivePort();
+    var setupReceivePort = ReceivePort().hostListener();
     var serverIsolate = await Isolate.spawn(
       _spawnIsolate,
       (rootIsolateToken, setupReceivePort.sendPort, parentIp, parentPort),
     );
 
-    var receiveCount = 0;
-    setupReceivePort.listen((data) {
-      if (data case null) {
-        throw StateError("Received null data at (receiveCount:$receiveCount)");
-      } else if (data case Object data) {
-        switch (receiveCount) {
-          case 0:
-            if (kDebugMode) {
-              print("[CHILD:Main] Send Port received");
-            }
+    // Our first expected value is the send port from the server isolate.
+    serverSendPort = await setupReceivePort.next<SendPort>();
+    if (kDebugMode) {
+      print("[CHILD:Main] Send Port received:${serverSendPort.hashCode}");
+    }
+    serverIsolate.addOnExitListener(serverSendPort);
 
-            serverSendPort = data as SendPort;
-            serverIsolate.addOnExitListener(serverSendPort);
-          case 1:
-            if (kDebugMode) {
-              print("[CHILD:Main] Server Port received");
-            }
-            port = data as int;
-          case 2:
-            if (kDebugMode) {
-              print("[CHILD:Main] Acknowledgement received: $data");
-            }
-            if (data == 1) {
-              startCompleter.complete(1);
-            } else {
-              startCompleter.completeError(data);
-            }
-          case >= 3:
-            if (kDebugMode) {
-              print("[CHILD:Main] Server Isolate Received: $data");
-            }
+    // Afterwards, the ACTUAL port of the server is received.
+    port = await setupReceivePort.next<int>();
+    if (kDebugMode) {
+      print("[CHILD:Main] Server Port received: $port");
+    }
 
-            _sendPort.send(data);
-        }
-      }
-      receiveCount++;
-    });
+    // Lastly, we expect an [Object] which will describe the status of the server.
+    var acknowledgement = await setupReceivePort.next<Object?>();
 
-    await startCompleter.future;
+    if (kDebugMode) {
+      print("[CHILD:Main] Acknowledgement received: $acknowledgement");
+    }
 
-    isStarted = true;
+    if (acknowledgement case 1) {
+      startCompleter.complete(1);
+    } else {
+      startCompleter.completeError(acknowledgement!);
+    }
+
+    setupReceivePort.redirectMessagesTo(_sendPort);
   }
 
   @override
@@ -491,6 +486,11 @@ final class _IsolatedChildServer {
       }
       return Response.ok("Confirmed parent device");
     })
+    ..delete("/unregister_parent_device", (Request request) async {
+      await _request<bool>(("unregisterParent", null));
+
+      return Response.ok("Unregistered parent device");
+    })
     ..put("/click", (Request request) async {
       try {
         var newCount = await request.readAsString().then(int.parse);
@@ -499,7 +499,7 @@ final class _IsolatedChildServer {
         await _request<bool>(("syncClicks", newCount));
 
         return Response.ok(newCount);
-      } catch (e) {
+      } on Exception catch (e) {
         return Response.internalServerError(body: e.toString());
       }
     });
@@ -536,8 +536,8 @@ Future<(HttpServer, int)> _shelfInitiate(Router router, int port) async {
   var server = await shelf_io.serve(handler, ip, port);
 
   if (kDebugMode) {
-    print("[PARENT] Serving at $ip:$port");
+    print("[:Server] Serving at $ip:$port");
   }
 
-  return (server, port);
+  return (server, server.port);
 }

@@ -7,6 +7,8 @@ import "package:bitsdojo_window/bitsdojo_window.dart";
 import "package:fluent_ui/fluent_ui.dart";
 import "package:flutter/material.dart";
 import "package:macos_window_utils/window_manipulator.dart";
+import "package:network_tools/network_tools.dart";
+import "package:path_provider/path_provider.dart";
 import "package:provider/provider.dart";
 
 Future<void> main() async {
@@ -14,8 +16,12 @@ Future<void> main() async {
 
   if (Platform.isMacOS) {
     await WindowManipulator.initialize();
-    // await WindowManipulator.hideTitle();
   }
+
+  /// Setup for network tools
+
+  var appDocDirectory = await getApplicationDocumentsDirectory();
+  await configureNetworkTools(appDocDirectory.path);
 
   /// The only shared state between the main isolate and the server isolate.
   var globalState = GlobalState();

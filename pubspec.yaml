@@ -50,6 +50,9 @@ dependencies:
   menu_bar: ^0.5.3
   macos_window_utils: ^1.6.1
   time: ^2.1.5
+  network_tools: ^5.0.5
+  path_provider: ^2.1.5
+  collection: ^1.19.0
 
 dev_dependencies:
   flutter_test:

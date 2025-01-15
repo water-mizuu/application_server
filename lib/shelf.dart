@@ -28,8 +28,10 @@ sealed class ShelfServer {
 final class ShelfParentServer implements ShelfServer {
   ShelfParentServer(this.globalState, this.ip, this.port) {
     receivePort.listen((message) {
+      assert(message is (String, Object?), "Each received data must have an identifier.");
+
       switch (message) {
-        case "click":
+        case ("click", _):
           globalState.counter.value++;
           serverSendPort.send(("requested", globalState.counter.value));
         case ("confirmClose", _):
@@ -144,7 +146,7 @@ final class ShelfParentServer implements ShelfServer {
   static Future<void> _spawnIsolate((RootIsolateToken, SendPort, int) payload) async {
     var (token, sendPort, port) = payload;
 
-    await _IsolatedParentServer().init(token, sendPort, port);
+    await _IsolatedParentServer().initialize(token, sendPort, port);
   }
 }
 
@@ -161,7 +163,7 @@ final class _IsolatedParentServer {
   final ReceivePort receivePort = ReceivePort();
   late final SendPort sendPort;
 
-  Future<void> init(RootIsolateToken token, SendPort mainIsolateSendPort, int port) async {
+  Future<void> initialize(RootIsolateToken token, SendPort mainIsolateSendPort, int port) async {
     try {
       BackgroundIsolateBinaryMessenger.ensureInitialized(token);
 
@@ -208,6 +210,10 @@ final class _IsolatedParentServer {
         }
 
         if (data case ("stop", _)) {
+          if (kDebugMode) {
+            print("[PARENT] Stopping server.");
+          }
+
           await serverInstance.close();
           receivePort.close();
           sendPort.send(("confirmClose", null));
@@ -265,7 +271,7 @@ final class _IsolatedParentServer {
     ..put(
       "/click",
       (Request request) async {
-        if (await _request("click") case int clicks) {
+        if (await _request(("click", null)) case int clicks) {
           return Response.ok("Clicks: $clicks");
         }
         return Response.badRequest();
@@ -289,6 +295,8 @@ final class _IsolatedParentServer {
 final class ShelfChildServer implements ShelfServer {
   ShelfChildServer(this.globalState, this.ip, this.parentIp, this.parentPort) {
     receivePort.listen((message) async {
+      assert(message is (String, Object?), "Each received data must have an identifier.");
+
       switch (message) {
         case ("syncClicks", int newCount):
           _clicksLock = true;
@@ -300,7 +308,7 @@ final class ShelfChildServer implements ShelfServer {
           if (kDebugMode) {
             print("The parent has unregistered the child device.");
           }
-          globalState.mode.value = DeviceClassification.unspecified;
+          globalState.mode.value = DeviceClassification.none;
           globalState.parentAddress.value = null;
 
           await stopServer();
@@ -379,6 +387,7 @@ final class ShelfChildServer implements ShelfServer {
     }
 
     setupReceivePort.redirectMessagesTo(_sendPort);
+    isStarted = true;
   }
 
   @override
@@ -408,7 +417,7 @@ final class ShelfChildServer implements ShelfServer {
   static Future<void> _spawnIsolate((RootIsolateToken, SendPort, String, int) payload) async {
     var (token, sendPort, parentIp, parentPort) = payload;
 
-    unawaited(_IsolatedChildServer(parentIp, parentPort).init(token, sendPort));
+    unawaited(_IsolatedChildServer(parentIp, parentPort).initialize(token, sendPort));
   }
 }
 
@@ -426,7 +435,7 @@ final class _IsolatedChildServer {
   final ReceivePort receivePort = ReceivePort();
   late final SendPort sendPort;
 
-  Future<void> init(RootIsolateToken token, SendPort mainIsolateSendPort) async {
+  Future<void> initialize(RootIsolateToken token, SendPort mainIsolateSendPort) async {
     try {
       sendPort = mainIsolateSendPort;
 
@@ -463,6 +472,10 @@ final class _IsolatedChildServer {
           }
 
           if (data case ("stop", _)) {
+            if (kDebugMode) {
+              print("[CHILD] Stopping server.");
+            }
+
             await serverInstance.close();
             receivePort.close();
             sendPort.send(("confirmClose", null));

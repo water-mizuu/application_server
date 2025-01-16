@@ -3,6 +3,7 @@ import "dart:io";
 
 import "package:application_server/global_state.dart";
 import "package:application_server/navigation_bar.dart";
+import "package:application_server/server_manager.dart";
 import "package:file_picker/file_picker.dart";
 import "package:fluent_ui/fluent_ui.dart" hide ButtonStyle;
 import "package:flutter/foundation.dart";
@@ -19,43 +20,31 @@ class ApplicationWindow extends StatefulWidget {
 }
 
 class _ApplicationWindowState extends State<ApplicationWindow> {
-  late final AppLifecycleListener _listener;
+  late final GlobalKey _key = GlobalKey();
 
   @override
   void initState() {
     super.initState();
 
-    var exit = false;
-    _listener = AppLifecycleListener(
-      binding: WidgetsBinding.instance,
-      onInactive: () {
-        exit = true;
-        Future.delayed(const Duration(milliseconds: 250), () {
-          exit = false;
-        });
-      },
-      onHide: () {
-        if (exit) {
-          if (kDebugMode) {
-            print("We probably exited.");
+    var serverManager = context.read<ServerManager>();
+    if (kDebugMode) {
+      print(serverManager.shouldPromptServerStartOnBoot);
+    }
+
+    if (serverManager.shouldPromptServerStartOnBoot) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (_key.currentContext case BuildContext context when context.mounted) {
+          switch (serverManager.mode.value) {
+            case DeviceClassification.parent:
+              throw UnimplementedError();
+            case DeviceClassification.child:
+              await serverManager.childPressed(context);
+            case DeviceClassification.none:
+              throw UnimplementedError();
           }
-
-          exit = false;
         }
-      },
-      onStateChange: (value) {
-        if (kDebugMode) {
-          print("The state changed to $value");
-        }
-      },
-    );
-  }
-
-  @override
-  void dispose() {
-    _listener.dispose();
-
-    super.dispose();
+      });
+    }
   }
 
   @override
@@ -67,22 +56,23 @@ class _ApplicationWindowState extends State<ApplicationWindow> {
         fontFamily: "Segoe UI",
       ),
       home: Builder(
+        key: _key,
         builder: (context) {
           return NotificationListener<ServerNotification>(
             onNotification: (notification) {
-              var globalState = context.read<GlobalState>();
-          
+              var serverManager = context.read<ServerManager>();
+
               unawaited(() async {
                 switch (notification.mode) {
                   case DeviceClassification.parent:
-                    await globalState.parentPressed(context);
+                    await serverManager.parentPressed(context);
                   case DeviceClassification.child:
-                    await globalState.childPressed(context);
+                    await serverManager.childPressed(context);
                   case DeviceClassification.none:
-                    await globalState.cancelPressed();
+                    await serverManager.cancelPressed();
                 }
               }());
-          
+
               return true;
             },
             child: Column(
@@ -92,7 +82,7 @@ class _ApplicationWindowState extends State<ApplicationWindow> {
                   child: Builder(
                     builder: (context) {
                       var widget = const MyHomePage() as Widget;
-          
+
                       if (Platform.isMacOS) {
                         /// This is the macOS menu bar.
                         widget = PlatformMenuBar(
@@ -119,12 +109,12 @@ class _ApplicationWindowState extends State<ApplicationWindow> {
                                         if (kDebugMode) {
                                           print("Opening a file.");
                                         }
-          
+
                                         var result = await FilePicker.platform.pickFiles();
                                         if (result == null) {
                                           return;
                                         }
-          
+
                                         if (kDebugMode) {
                                           print(result.names);
                                         }
@@ -183,12 +173,12 @@ class _ApplicationWindowState extends State<ApplicationWindow> {
                                       if (kDebugMode) {
                                         print("Opening a file.");
                                       }
-          
+
                                       var result = await FilePicker.platform.pickFiles();
                                       if (result == null) {
                                         return;
                                       }
-          
+
                                       if (kDebugMode) {
                                         print(result.names);
                                       }
@@ -218,7 +208,7 @@ class _ApplicationWindowState extends State<ApplicationWindow> {
                           child: widget,
                         );
                       }
-          
+
                       return widget;
                     },
                   ),
@@ -248,6 +238,7 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   Widget build(BuildContext context) {
     var globalState = context.read<GlobalState>();
+    var serverManager = context.read<ServerManager>();
 
     return Scaffold(
       body: Center(
@@ -255,18 +246,18 @@ class _MyHomePageState extends State<MyHomePage> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             ValueListenableBuilder(
-              valueListenable: globalState.mode,
+              valueListenable: serverManager.mode,
               builder: (_, value, __) => Text("You are currently $value"),
             ),
             ValueListenableBuilder(
-              valueListenable: globalState.address,
+              valueListenable: serverManager.address,
               builder: (_, value, __) => switch (value) {
                 null => const SizedBox(),
                 (var ip, var port) => Text("Currently hosting at http://$ip:$port"),
               },
             ),
             ValueListenableBuilder(
-              valueListenable: globalState.parentAddress,
+              valueListenable: serverManager.parentAddress,
               builder: (_, value, __) => switch (value) {
                 null => const SizedBox(),
                 (var ip, var port) => Text("Currently connected to http://$ip:$port"),
@@ -288,7 +279,7 @@ class _MyHomePageState extends State<MyHomePage> {
               ],
             ),
             ValueListenableBuilder(
-              valueListenable: globalState.mode,
+              valueListenable: serverManager.mode,
               builder: (_, value, __) => Button(
                 onPressed: switch (value) {
                   DeviceClassification.none => null,

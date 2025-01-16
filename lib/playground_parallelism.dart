@@ -3,8 +3,6 @@
 import "dart:async";
 import "dart:isolate";
 
-import "package:flutter/foundation.dart";
-
 extension type ListenedReceivePort._(ReceivePort _port) {
   factory ListenedReceivePort(
     ReceivePort receivePort,
@@ -30,13 +28,13 @@ extension type ListenedReceivePort._(ReceivePort _port) {
         return;
       }
 
-      if (kDebugMode) {
-        print("Received a message $message but there is no completer to complete it.");
+      // if (kDebugMode) {
+      //   print("Received a message $message but there is no completer to complete it.");
 
-        if (getFallbackListener() != null) {
-          print("The fallback listener will be called instead.");
-        }
-      }
+      //   if (getFallbackListener() != null) {
+      //     print("The fallback listener will be called instead.");
+      //   }
+      // }
 
       if (getFallbackListener() case var fallbackListener?) {
         _completers[receivePort] = null;

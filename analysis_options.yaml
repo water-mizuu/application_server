@@ -18,7 +18,7 @@ analyzer:
 linter:
   rules:
     - always_declare_return_types
-    # - always_put_control_body_on_new_line
+    - always_put_control_body_on_new_line
     - always_put_required_named_parameters_first
     # - always_specify_types
     - always_use_package_imports
@@ -199,7 +199,7 @@ linter:
     - unnecessary_new
     - unnecessary_null_aware_assignments
     - unnecessary_null_aware_operator_on_extension_on_nullable
-    - unnecessary_null_checks
+    # - unnecessary_null_checks
     - unnecessary_null_in_if_null_operators
     - unnecessary_nullable_for_final_variable_declarations
     - unnecessary_overrides

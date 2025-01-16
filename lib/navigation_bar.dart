@@ -1,7 +1,7 @@
 import "dart:io";
 
-import "package:application_server/global_state.dart";
 import "package:application_server/maximize_or_restore_button.dart";
+import "package:application_server/server_manager.dart";
 import "package:bitsdojo_window/bitsdojo_window.dart";
 import "package:fluent_ui/fluent_ui.dart";
 import "package:flutter/foundation.dart";
@@ -92,7 +92,7 @@ class NavigationBar extends StatelessWidget {
                           print("[MAIN] Closing the window.");
                         }
 
-                        await context.read<GlobalState>().closeServer();
+                        await context.read<ServerManager>().closeServer();
                         appWindow.close();
                       },
                     ),

@@ -1,10 +1,20 @@
+/// This file contains all the code for the server-side part of the application.
+///   The server is split into two parts: the parent server and the child server.
+///   The parent server is the main server that controls the child servers.
+///   The child servers are the servers that are controlled by the parent server.
+///
+/// However, the initialization of the said servers reside in global_state file.
+library;
+
 import "dart:async";
+import "dart:convert";
 import "dart:io";
 import "dart:isolate";
 
 import "package:application_server/future_not_null.dart";
 import "package:application_server/global_state.dart";
 import "package:application_server/playground_parallelism.dart";
+import "package:application_server/server_manager.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/services.dart";
 import "package:http/http.dart" as http;
@@ -12,6 +22,7 @@ import "package:network_info_plus/network_info_plus.dart";
 import "package:shelf/shelf.dart";
 import "package:shelf/shelf_io.dart" as shelf_io;
 import "package:shelf_router/shelf_router.dart";
+import "package:time/time.dart";
 
 sealed class ShelfServer {
   Future<void> startServer();
@@ -26,15 +37,19 @@ sealed class ShelfServer {
 }
 
 final class ShelfParentServer implements ShelfServer {
-  ShelfParentServer(this.globalState, this.ip, this.port) {
-    receivePort.listen((message) {
+  ShelfParentServer(this.globalState, this.serverManager, this.ip, this.port) {
+    receivePort.listen((message) async {
       assert(message is (String, Object?), "Each received data must have an identifier.");
 
       switch (message) {
-        case ("click", _):
+        case (Requests.click, _):
           globalState.counter.value++;
           serverSendPort.send(("requested", globalState.counter.value));
-        case ("confirmClose", _):
+        case (Requests.globalStateSnapshot, _):
+          serverSendPort.send(("requested", globalState.toJson()));
+        case (Requests.requestClose, _):
+          await stopServer();
+        case (Requests.confirmClose, _):
           closeCompleter.complete(0);
         case _:
           if (kDebugMode) {
@@ -43,6 +58,7 @@ final class ShelfParentServer implements ShelfServer {
       }
     });
   }
+
   @override
   final String ip;
 
@@ -50,7 +66,9 @@ final class ShelfParentServer implements ShelfServer {
   late final int port;
 
   final GlobalState globalState;
-  final ReceivePort _startupReceivePort = ReceivePort();
+  final ServerManager serverManager;
+
+  final ListenedReceivePort _startupReceivePort = ReceivePort().hostListener();
   final ReceivePort receivePort = ReceivePort();
   late final SendPort _sendPort = receivePort.sendPort;
   late final SendPort serverSendPort;
@@ -78,43 +96,24 @@ final class ShelfParentServer implements ShelfServer {
       (rootIsolateToken, _startupReceivePort.sendPort, port),
     );
 
-    var receiveCount = 0;
-    _startupReceivePort.listen((data) {
-      if (data case null) {
-        throw StateError("Received null data at (receiveCount:$receiveCount)");
-      } else if (data case Object data) {
-        switch (receiveCount) {
-          case 0:
-            if (kDebugMode) {
-              print("[PARENT:Main] Main Isolate Send Port received");
-            }
+    serverSendPort = await _startupReceivePort.next<SendPort>();
+    if (kDebugMode) {
+      print("[PARENT:Main] Main Isolate Send Port received");
+    }
+    serverIsolate.addOnExitListener(serverSendPort);
 
-            serverSendPort = data as SendPort;
-            serverIsolate.addOnExitListener(serverSendPort);
-          case 1:
-            if (kDebugMode) {
-              print("[PARENT:Main] Main Isolate Received acknowledgement: $data");
-            }
+    var acknowledgement = await _startupReceivePort.next<Object>();
+    if (kDebugMode) {
+      print("[PARENT:Main] Acknowledgement received: $acknowledgement");
+    }
 
-            if (data == 1) {
-              startCompleter.complete(1);
-            } else {
-              startCompleter.completeError(data);
-            }
-          case >= 2:
-            if (kDebugMode) {
-              print("[PARENT:Main] Server Isolate Received: $data");
-            }
+    if (acknowledgement case 1) {
+      startCompleter.complete(1);
+    } else {
+      startCompleter.completeError(acknowledgement);
+    }
 
-            _sendPort.send(data);
-        }
-
-        receiveCount++;
-      }
-    });
-
-    await startCompleter.future;
-
+    _startupReceivePort.redirectMessagesTo(_sendPort);
     isStarted = true;
   }
 
@@ -193,13 +192,28 @@ final class _IsolatedParentServer {
 
           for (var (ip, port) in _childDevices.toList()) {
             try {
-              var uri = Uri.parse("http://$ip:$port/click");
+              var uri = Uri.parse("http://$ip:$port/sync_click");
+              var response = await http
+                  .put(uri, body: clicks.toString()) //
+                  .timeout(500.milliseconds);
 
-              await http.put(uri, body: clicks.toString());
+              if (response.statusCode != 200) {
+                throw http.ClientException("Failed to update the child device.", uri);
+              }
+            } on TimeoutException {
+              /// The child device did not respond.
+              ///   We assume that the child device is no longer available.
+
+              if (kDebugMode) {
+                print("[PARENT] Removing device $ip:$port due to timeout.");
+              }
+
+              _childDevices.remove((ip, port));
             } on http.ClientException catch (e) {
               if (kDebugMode) {
-                print("[PARENT] Removing device $ip:$port due to error $e");
+                print("[PARENT] Removing device $ip:$port due to ${e.runtimeType} ${e.message}");
               }
+
               _childDevices.remove((ip, port));
             }
           }
@@ -231,47 +245,38 @@ final class _IsolatedParentServer {
     ..post(
       r"/register_child_device/<deviceIp>/<devicePort:\d+>",
       (Request request, String deviceIp, String devicePort) async {
-        /// Whenever a child device registers, we do a handshake.
-        /// First, we ping the child device to confirm its existence.
-        /// Then, we add it to the list of child devices.
+        try {
+          /// Whenever a child device registers, we do a handshake.
+          /// First, we ping the child device to confirm its existence.
+          /// Then, we add it to the list of child devices.
 
-        if (kDebugMode) {
-          print("[PARENT] Received registration from $deviceIp:$devicePort");
+          if (kDebugMode) {
+            print("[PARENT] Received registration from $deviceIp:$devicePort");
+          }
+
+          if (_childDevices.contains((deviceIp, devicePort))) {
+            return Response.badRequest(body: "Device already registered.");
+          }
+
+          var uri = Uri.parse("http://$deviceIp:$devicePort/confirm_parent_device");
+          var state = await _request<Map<String, Object?>>((Requests.globalStateSnapshot, null));
+          var response = await http.post(uri, body: state).timeout(500.milliseconds);
+          if (response.statusCode != 200) {
+            return Response.badRequest(body: "Failed to confirm the device.");
+          }
+
+          _childDevices.add((deviceIp, devicePort));
+
+          return Response.ok("Registered $deviceIp:$devicePort");
+        } on TimeoutException {
+          return Response.badRequest(body: "Confirmation timed out.");
         }
-
-        if (_childDevices.contains((deviceIp, devicePort))) {
-          return Response.badRequest(body: "Device already registered.");
-        }
-
-        var uri = Uri.parse("http://$deviceIp:$devicePort/confirm_parent_device");
-        var response = await http.post(uri);
-        if (response.statusCode != 200) {
-          return Response.badRequest(body: "Failed to confirm the device.");
-        }
-
-        _childDevices.add((deviceIp, devicePort));
-
-        return Response.ok("Registered $deviceIp:$devicePort");
-      },
-    )
-    ..delete(
-      r"/unregister_child_device/<deviceIp>/<devicePort:\d+>",
-      (Request request, String deviceIp, String devicePort) {
-        if (kDebugMode) {
-          print("[PARENT] Received unregistration from $deviceIp:$devicePort");
-        }
-
-        if (!_childDevices.remove((deviceIp, devicePort))) {
-          return Response.notFound("Device not found.");
-        }
-
-        return Response.ok("Unregistered $deviceIp:$devicePort");
       },
     )
     ..put(
       "/click",
       (Request request) async {
-        if (await _request(("click", null)) case int clicks) {
+        if (await _request((Requests.click, null)) case int clicks) {
           return Response.ok("Clicks: $clicks");
         }
         return Response.badRequest();
@@ -293,31 +298,35 @@ final class _IsolatedParentServer {
 }
 
 final class ShelfChildServer implements ShelfServer {
-  ShelfChildServer(this.globalState, this.ip, this.parentIp, this.parentPort) {
+  ShelfChildServer(
+    this.globalState,
+    this.serverManager,
+    this.ip,
+    this.parentIp,
+    this.parentPort,
+  ) {
     receivePort.listen((message) async {
       assert(message is (String, Object?), "Each received data must have an identifier.");
 
       switch (message) {
-        case ("syncClicks", int newCount):
-          _clicksLock = true;
+        case (Requests.syncClicks, int newCount):
+          _lockClicks = true;
           globalState.counter.value = newCount;
-          _clicksLock = false;
-        case ("newClicks", int newCount):
-          globalState.counter.value = newCount;
-        case ("unregisterParent", _):
-          if (kDebugMode) {
-            print("The parent has unregistered the child device.");
-          }
-          globalState.mode.value = DeviceClassification.none;
-          globalState.parentAddress.value = null;
-
+          _lockClicks = false;
+          serverSendPort.send(("requested", true));
+        case (Requests.overrideGlobalState, String snapshot):
+          var json = jsonDecode(snapshot) as Map<String, Object?>;
+          await globalState.synchronizeFromJson(json);
+          serverSendPort.send(("requested", true));
+        case (Requests.requestClose, _):
           await stopServer();
-        case ("confirmClose", _):
+
+        /// After [stopServer], the receivePort of the server isolate is closed.
+        ///   So, we don't need to send anything back.
+        case (Requests.confirmClose, _):
           closeCompleter.complete(0);
         case _:
-          if (kDebugMode) {
-            print("[CHILD:Main] Server Isolate Received: $message");
-          }
+          throw StateError("Unrecognized message: $message");
       }
     });
   }
@@ -332,6 +341,7 @@ final class ShelfChildServer implements ShelfServer {
   final int parentPort;
 
   final GlobalState globalState;
+  final ServerManager serverManager;
   final ReceivePort receivePort = ReceivePort();
   late final SendPort _sendPort = receivePort.sendPort;
   late final SendPort serverSendPort;
@@ -345,7 +355,8 @@ final class ShelfChildServer implements ShelfServer {
   @override
   bool isStarted = false;
 
-  bool _clicksLock = false;
+  bool _lockClicks = false;
+  final ListenedReceivePort _setupReceivePort = ReceivePort().hostListener();
 
   @override
   Future<void> startServer() async {
@@ -354,27 +365,26 @@ final class ShelfChildServer implements ShelfServer {
     assert(RootIsolateToken.instance != null, "This should be run in the root isolate.");
     var rootIsolateToken = RootIsolateToken.instance!;
 
-    var setupReceivePort = ReceivePort().hostListener();
     var serverIsolate = await Isolate.spawn(
       _spawnIsolate,
-      (rootIsolateToken, setupReceivePort.sendPort, parentIp, parentPort),
+      (rootIsolateToken, _setupReceivePort.sendPort, parentIp, parentPort),
     );
 
     // Our first expected value is the send port from the server isolate.
-    serverSendPort = await setupReceivePort.next<SendPort>();
+    serverSendPort = await _setupReceivePort.next<SendPort>();
     if (kDebugMode) {
       print("[CHILD:Main] Send Port received:${serverSendPort.hashCode}");
     }
     serverIsolate.addOnExitListener(serverSendPort);
 
     // Afterwards, the ACTUAL port of the server is received.
-    port = await setupReceivePort.next<int>();
+    port = await _setupReceivePort.next<int>();
     if (kDebugMode) {
       print("[CHILD:Main] Server Port received: $port");
     }
 
     // Lastly, we expect an [Object] which will describe the status of the server.
-    var acknowledgement = await setupReceivePort.next<Object?>();
+    var acknowledgement = await _setupReceivePort.next<Object>();
 
     if (kDebugMode) {
       print("[CHILD:Main] Acknowledgement received: $acknowledgement");
@@ -383,10 +393,10 @@ final class ShelfChildServer implements ShelfServer {
     if (acknowledgement case 1) {
       startCompleter.complete(1);
     } else {
-      startCompleter.completeError(acknowledgement!);
+      startCompleter.completeError(acknowledgement);
     }
 
-    setupReceivePort.redirectMessagesTo(_sendPort);
+    _setupReceivePort.redirectMessagesTo(_sendPort);
     isStarted = true;
   }
 
@@ -400,12 +410,13 @@ final class ShelfChildServer implements ShelfServer {
     serverSendPort.send(("stop", null));
     await closeCompleter.future;
 
+    _setupReceivePort.close();
     receivePort.close();
     isStarted = false;
   }
 
   void _clickListener() {
-    if (_clicksLock) {
+    if (_lockClicks) {
       return;
     }
 
@@ -463,11 +474,32 @@ final class _IsolatedChildServer {
           }
 
           if (data case ("click", int clicks)) {
-            var uri = Uri.parse("http://$parentIp:$parentPort/click");
-            var response = await http.put(uri, body: clicks.toString());
+            var encounteredError = true;
+            try {
+              var uri = Uri.parse("http://$parentIp:$parentPort/click");
+              var response = await http //
+                  .put(uri, body: clicks.toString())
+                  .timeout(500.milliseconds);
 
-            if (kDebugMode) {
-              print("[PARENT] Updated with result: ${response.body}");
+              if (kDebugMode) {
+                print("[PARENT] Updated with result: ${response.body}");
+              }
+
+              encounteredError = false;
+            } on TimeoutException {
+              if (kDebugMode) {
+                print("[PARENT] Failed to update the parent device.");
+              }
+            } on http.ClientException catch (e) {
+              if (kDebugMode) {
+                print(
+                  "[PARENT] Failed to update the parent device due to ${e.runtimeType} ${e.message}",
+                );
+              }
+            } finally {
+              if (encounteredError) {
+                /// We need to shut down this server.
+              }
             }
           }
 
@@ -495,21 +527,20 @@ final class _IsolatedChildServer {
   late final Router router = Router() //
     ..post("/confirm_parent_device", (Request request) async {
       if (kDebugMode) {
-        print(request.context);
+        print("[CHILD] Received confirmation from parent device.");
       }
+
+      var snapshot = await request.readAsString();
+      await _request<bool>((Requests.overrideGlobalState, snapshot));
+
       return Response.ok("Confirmed parent device");
     })
-    ..delete("/unregister_parent_device", (Request request) async {
-      await _request<bool>(("unregisterParent", null));
-
-      return Response.ok("Unregistered parent device");
-    })
-    ..put("/click", (Request request) async {
+    ..put("/sync_click", (Request request) async {
       try {
         var newCount = await request.readAsString().then(int.parse);
 
         /// Update the local state.
-        await _request<bool>(("syncClicks", newCount));
+        await _request<bool>((Requests.syncClicks, newCount));
 
         return Response.ok(newCount);
       } on Exception catch (e) {
@@ -529,6 +560,15 @@ final class _IsolatedChildServer {
 
     return response;
   }
+}
+
+class Requests {
+  static const String globalStateSnapshot = "globalStateSnapshot";
+  static const String overrideGlobalState = "overrideGlobalState";
+  static const String click = "click";
+  static const String syncClicks = "syncClicks";
+  static const String requestClose = "requestClose";
+  static const String confirmClose = "confirmClose";
 }
 
 /// Initializes the shelf server, returning the server instance and the port.

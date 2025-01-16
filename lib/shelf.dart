@@ -174,6 +174,12 @@ final class _IsolatedParentServer {
       /// Initialize the receivePort listener.
       ///   I have no idea how to make this better.
       receivePort.listen((data) async {
+        assert(
+          data is (String, Object?),
+          "Each received data must have an identifier. "
+          "However, the received data was: $data",
+        );
+
         if (kDebugMode) {
           print("[PARENT] Server Isolate Received: $data");
         }
@@ -197,8 +203,8 @@ final class _IsolatedParentServer {
                   .put(uri, body: clicks.toString()) //
                   .timeout(500.milliseconds);
 
-              if (response.statusCode != 200) {
-                throw http.ClientException("Failed to update the child device.", uri);
+              if (kDebugMode) {
+                print(response.statusCode);
               }
             } on TimeoutException {
               /// The child device did not respond.
@@ -232,6 +238,8 @@ final class _IsolatedParentServer {
           receivePort.close();
           sendPort.send(("confirmClose", null));
         }
+
+        throw UnsupportedError("Unrecognized message: $data");
       });
 
       sendPort.send(1);
@@ -316,11 +324,11 @@ final class ShelfChildServer implements ShelfServer {
           _lockClicks = true;
           globalState.counter.value = newCount;
           _lockClicks = false;
-          serverSendPort.send(("requested", true));
+          sendRequested(true);
         case (Requests.overrideGlobalState, String snapshot):
           var json = jsonDecode(snapshot) as Map<String, Object?>;
           await globalState.synchronizeFromJson(json);
-          serverSendPort.send(("requested", true));
+          sendRequested(true);
         case (Requests.requestClose, _):
           await stopServer();
 
@@ -426,6 +434,10 @@ final class ShelfChildServer implements ShelfServer {
     serverSendPort.send(("click", globalState.counter.value));
   }
 
+  void sendRequested(Object? value) {
+    serverSendPort.send(("requested", value));
+  }
+
   /// Spawns the server in another isolate.
   ///   It is critical that this METHOD does not see any of the fields of the [ShelfChildServer] class.
   static Future<void> _spawnIsolate((RootIsolateToken, SendPort, String, int) payload) async {
@@ -485,18 +497,19 @@ final class _IsolatedChildServer {
                   .timeout(500.milliseconds);
 
               if (kDebugMode) {
-                print("[PARENT] Updated with result: ${response.body}");
+                print("[CHILD] Updated with result: ${response.body}");
               }
 
               encounteredError = false;
             } on TimeoutException {
               if (kDebugMode) {
-                print("[PARENT] Failed to update the parent device.");
+                print("[CHILD] Failed to update the CHILD device.");
               }
             } on http.ClientException catch (e) {
               if (kDebugMode) {
                 print(
-                  "[PARENT] Failed to update the parent device due to ${e.runtimeType} ${e.message}",
+                  "[CHILD] Failed to update the parent "
+                  "device due to ${e.runtimeType} ${e.message}",
                 );
               }
             } finally {
@@ -515,6 +528,8 @@ final class _IsolatedChildServer {
             receivePort.close();
             sendPort.send(("confirmClose", null));
           }
+
+          throw UnsupportedError("Unrecognized message: $data");
         },
         onDone: () {},
       );

@@ -46,7 +46,7 @@ final class ShelfParentServer implements ShelfServer {
           globalState.counter.value++;
           serverSendPort.send(("requested", globalState.counter.value));
         case (Requests.globalStateSnapshot, _):
-          serverSendPort.send(("requested", globalState.toJson()));
+          serverSendPort.send(("requested", jsonEncode(globalState.toJson())));
         case (Requests.requestClose, _):
           await stopServer();
         case (Requests.confirmClose, _):
@@ -259,7 +259,10 @@ final class _IsolatedParentServer {
           }
 
           var uri = Uri.parse("http://$deviceIp:$devicePort/confirm_parent_device");
-          var state = await _request<Map<String, Object?>>((Requests.globalStateSnapshot, null));
+          var state = await _request<String>((Requests.globalStateSnapshot, null));
+          if (kDebugMode) {
+            print("[PARENT] Received state snapshot $state");
+          }
           var response = await http.post(uri, body: state).timeout(500.milliseconds);
           if (response.statusCode != 200) {
             return Response.badRequest(body: "Failed to confirm the device.");
@@ -535,7 +538,7 @@ final class _IsolatedChildServer {
 
       return Response.ok("Confirmed parent device");
     })
-    ..put("/sync_click", (Request request) async {
+    ..post("/sync_click", (Request request) async {
       try {
         var newCount = await request.readAsString().then(int.parse);
 

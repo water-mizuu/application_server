@@ -121,7 +121,6 @@ class ServerManager {
         sharedPreferences.remove("parent_port"),
       ).wait;
 
-      yield ("message", "Starting server at http://$ip:$port");
       _currentServer = ShelfParentServer(globalState, this, ip, port);
       await _currentServer!.startServer();
       yield ("message", "Started server at http://$ip:$port");
@@ -176,17 +175,11 @@ class ServerManager {
         sharedPreferences.setInt("parent_port", parentPort),
       ).wait;
 
-      yield ("message", "Starting server at http://$ip:$port");
       _currentServer = ShelfChildServer(globalState, this, ip, parentIp, parentPort);
       await _currentServer!.startServer();
       port = _currentServer!.port;
       yield ("message", "Started server at http://$ip:$port");
 
-      if (kDebugMode) {
-        print("Server started at http://$ip:$port");
-        print("Handshaking with the parent device at http://$parentIp:$parentPort");
-      }
-      yield ("message", "Handshaking with the parent device at http://$parentIp:$parentPort");
       var uri = Uri.parse("http://$parentIp:$parentPort/register_child_device/$ip/$port");
       var response = await http.post(uri).timeout(1.seconds);
       if (response.statusCode != 200) {

@@ -4,6 +4,12 @@
 ///   The child servers are the servers that are controlled by the parent server.
 ///
 /// However, the initialization of the said servers reside in global_state file.
+///
+/// CRUD Operations in HTTP:
+///   - Create: POST
+///   - Read: GET
+///   - Update: PUT
+///   - Delete: DELETE
 library;
 
 import "dart:async";
@@ -37,7 +43,12 @@ sealed class ShelfServer {
 }
 
 final class ShelfParentServer implements ShelfServer {
-  ShelfParentServer(this.globalState, this.serverManager, this.ip, this.port) {
+  ShelfParentServer(
+    this.globalState,
+    this.serverManager,
+    this.ip,
+    this.port,
+  ) {
     receivePort.listen((message) async {
       assert(message is (String, Object?), "Each received data must have an identifier.");
 
@@ -107,7 +118,7 @@ final class ShelfParentServer implements ShelfServer {
       print("[PARENT:Main] Acknowledgement received: $acknowledgement");
     }
 
-    if (acknowledgement case 1) {
+    if (acknowledgement == 1) {
       startCompleter.complete(1);
     } else {
       startCompleter.completeError(acknowledgement);
@@ -155,7 +166,7 @@ final class _IsolatedParentServer {
 
   /// A catcher of sorts for the receivePort listener.
   /// Whenever we request something from the main isolate, we must assign a completer BEFOREHAND.
-  Completer<dynamic>? _receiveCompleter;
+  Completer<Object?>? _receiveCompleter;
 
   final List<(String, String)> _childDevices = <(String, String)>[];
 
@@ -180,66 +191,61 @@ final class _IsolatedParentServer {
           "However, the received data was: $data",
         );
 
-        if (kDebugMode) {
-          print("[PARENT] Server Isolate Received: $data");
-        }
-
-        if (data case ("requested", dynamic v)) {
-          if (_receiveCompleter != null && !_receiveCompleter!.isCompleted) {
-            _receiveCompleter!.complete(v);
-          }
-        }
-
-        if (data case ("click", int clicks)) {
-          if (kDebugMode) {
-            print("[PARENT] Received click data: $clicks");
-            print("[PARENT] There are currently child devices with IPs $_childDevices");
-          }
-
-          for (var (ip, port) in _childDevices.toList()) {
-            try {
-              var uri = Uri.parse("http://$ip:$port/sync_click");
-              var response = await http
-                  .put(uri, body: clicks.toString()) //
-                  .timeout(500.milliseconds);
-
-              if (kDebugMode) {
-                print(response.statusCode);
-              }
-            } on TimeoutException {
-              /// The child device did not respond.
-              ///   We assume that the child device is no longer available.
-
-              if (kDebugMode) {
-                print("[PARENT] Removing device $ip:$port due to timeout.");
-              }
-
-              _childDevices.remove((ip, port));
-            } on http.ClientException catch (e) {
-              if (kDebugMode) {
-                print("[PARENT] Removing device $ip:$port due to ${e.runtimeType} ${e.message}");
-              }
-
-              _childDevices.remove((ip, port));
+        switch (data) {
+          case ("requested", var v):
+            if (_receiveCompleter != null && !_receiveCompleter!.isCompleted) {
+              _receiveCompleter!.complete(v);
             }
-          }
+          case ("click", int clicks):
+            if (kDebugMode) {
+              print("[PARENT] Received click data: $clicks");
+              print("[PARENT] There are currently child devices with IPs $_childDevices");
+            }
 
-          if (kDebugMode) {
-            print("[PARENT] Updated with result.");
-          }
+            for (var (ip, port) in _childDevices.toList()) {
+              try {
+                var uri = Uri.parse("http://$ip:$port/sync_click");
+                var response = await http
+                    .post(uri, body: clicks.toString()) //
+                    .timeout(1.seconds);
+
+                if (kDebugMode) {
+                  print("[PARENT] Response returned with status code ${response.statusCode}");
+                }
+
+                if (response.statusCode != 200) {
+                  throw http.ClientException("Failed to update the child device.");
+                }
+              } on TimeoutException {
+                /// The child device did not respond.
+                ///   We assume that the child device is no longer available.
+
+                if (kDebugMode) {
+                  print("[PARENT] Removing device $ip:$port due to timeout.");
+                }
+
+                _childDevices.remove((ip, port));
+              } on http.ClientException catch (e) {
+                if (kDebugMode) {
+                  print("[PARENT] Removing device $ip:$port due to ${e.runtimeType} ${e.message}");
+                }
+
+                _childDevices.remove((ip, port));
+              }
+            }
+
+            if (kDebugMode) {
+              print("[PARENT] Updated with result.");
+            }
+          case ("stop", _):
+            if (kDebugMode) {
+              print("[PARENT] Stopping server.");
+            }
+
+            await serverInstance.close();
+            receivePort.close();
+            sendPort.send(("confirmClose", null));
         }
-
-        if (data case ("stop", _)) {
-          if (kDebugMode) {
-            print("[PARENT] Stopping server.");
-          }
-
-          await serverInstance.close();
-          receivePort.close();
-          sendPort.send(("confirmClose", null));
-        }
-
-        throw UnsupportedError("Unrecognized message: $data");
       });
 
       sendPort.send(1);
@@ -266,12 +272,12 @@ final class _IsolatedParentServer {
             return Response.badRequest(body: "Device already registered.");
           }
 
-          var uri = Uri.parse("http://$deviceIp:$devicePort/confirm_parent_device");
           var state = await _request<String>((Requests.globalStateSnapshot, null));
           if (kDebugMode) {
             print("[PARENT] Received state snapshot $state");
           }
-          var response = await http.post(uri, body: state).timeout(500.milliseconds);
+          var uri = Uri.parse("http://$deviceIp:$devicePort/confirm_parent_device");
+          var response = await http.post(uri, body: state).timeout(1.seconds);
           if (response.statusCode != 200) {
             return Response.badRequest(body: "Failed to confirm the device.");
           }
@@ -288,16 +294,20 @@ final class _IsolatedParentServer {
       "/click",
       (Request request) async {
         if (await _request((Requests.click, null)) case int clicks) {
-          return Response.ok("Clicks: $clicks");
+          return Response.ok(clicks.toString());
         }
         return Response.badRequest();
       },
     );
 
+  Future<void> _send((String, Object?) request) async {
+    sendPort.send(request);
+  }
+
   /// Sends a request to the main isolate and returns the response.
   ///   This is a blocking operation.
   ///   There should be an appropriate handler in the main isolate.
-  Future<T?> _request<T extends Object>(Object? request) async {
+  Future<T?> _request<T extends Object>((String, Object?) request) async {
     var completer = Completer<T>();
     _receiveCompleter = completer;
     sendPort.send(request);
@@ -324,11 +334,11 @@ final class ShelfChildServer implements ShelfServer {
           _lockClicks = true;
           globalState.counter.value = newCount;
           _lockClicks = false;
-          sendRequested(true);
         case (Requests.overrideGlobalState, String snapshot):
           var json = jsonDecode(snapshot) as Map<String, Object?>;
+          _lockClicks = true;
           await globalState.synchronizeFromJson(json);
-          sendRequested(true);
+          _lockClicks = false;
         case (Requests.requestClose, _):
           await stopServer();
 
@@ -401,7 +411,7 @@ final class ShelfChildServer implements ShelfServer {
       print("[CHILD:Main] Acknowledgement received: $acknowledgement");
     }
 
-    if (acknowledgement case 1) {
+    if (acknowledgement == 1) {
       startCompleter.complete(1);
     } else {
       startCompleter.completeError(acknowledgement);
@@ -456,7 +466,7 @@ final class _IsolatedChildServer {
 
   /// A catcher of sorts for the receivePort listener.
   /// Whenever we request something from the main isolate, we must assign a completer BEFOREHAND.
-  Completer<dynamic>? _receiveCompleter;
+  Completer<Object?>? _receiveCompleter;
 
   final ReceivePort receivePort = ReceivePort();
   late final SendPort sendPort;
@@ -480,56 +490,56 @@ final class _IsolatedChildServer {
             "However, the received data was: $data",
           );
 
-          if (data case ("requested", Object? v)) {
-            if (_receiveCompleter != null && !_receiveCompleter!.isCompleted) {
-              _receiveCompleter!.complete(v);
-            } else {
-              throw StateError("No completer was assigned for the received data: $v");
-            }
+          if (kDebugMode) {
+            print("[CHILD] Received: $data");
           }
 
-          if (data case ("click", int clicks)) {
-            var encounteredError = true;
-            try {
-              var uri = Uri.parse("http://$parentIp:$parentPort/click");
-              var response = await http //
-                  .put(uri, body: clicks.toString())
-                  .timeout(500.milliseconds);
+          switch (data) {
+            case ("requested", var v):
+              if (_receiveCompleter != null && !_receiveCompleter!.isCompleted) {
+                _receiveCompleter!.complete(v);
+              } else {
+                throw StateError("No completer was assigned for the received data: $v");
+              }
+            case ("click", int clicks):
+              try {
+                var uri = Uri.parse("http://$parentIp:$parentPort/click");
+                var response = await http //
+                    .put(uri, body: clicks.toString())
+                    .timeout(1.seconds);
 
+                if (kDebugMode) {
+                  print("[CHILD] Updated with result: ${response.body}");
+                }
+
+                if (response.statusCode != 200) {
+                  throw http.ClientException("Failed to update the parent device.");
+                }
+
+                var value = int.parse(response.body);
+                await _send((Requests.syncClicks, value));
+              } on TimeoutException catch (e) {
+                if (kDebugMode) {
+                  print("[CHILD] $e");
+                  print("[CHILD] Failed to update the CHILD device.");
+                }
+              } on http.ClientException catch (e) {
+                if (kDebugMode) {
+                  print(
+                    "[CHILD] Failed to update the parent "
+                    "device due to ${e.runtimeType} ${e.message}",
+                  );
+                }
+              }
+            case ("stop", _):
               if (kDebugMode) {
-                print("[CHILD] Updated with result: ${response.body}");
+                print("[CHILD] Stopping server.");
               }
 
-              encounteredError = false;
-            } on TimeoutException {
-              if (kDebugMode) {
-                print("[CHILD] Failed to update the CHILD device.");
-              }
-            } on http.ClientException catch (e) {
-              if (kDebugMode) {
-                print(
-                  "[CHILD] Failed to update the parent "
-                  "device due to ${e.runtimeType} ${e.message}",
-                );
-              }
-            } finally {
-              if (encounteredError) {
-                /// We need to shut down this server.
-              }
-            }
+              await serverInstance.close();
+              receivePort.close();
+              sendPort.send(("confirmClose", null));
           }
-
-          if (data case ("stop", _)) {
-            if (kDebugMode) {
-              print("[CHILD] Stopping server.");
-            }
-
-            await serverInstance.close();
-            receivePort.close();
-            sendPort.send(("confirmClose", null));
-          }
-
-          throw UnsupportedError("Unrecognized message: $data");
         },
         onDone: () {},
       );
@@ -543,33 +553,43 @@ final class _IsolatedChildServer {
 
   /// The router used by the shelf router. Define all routes here.
   late final Router router = Router() //
-    ..post("/confirm_parent_device", (Request request) async {
-      if (kDebugMode) {
-        print("[CHILD] Received confirmation from parent device.");
-      }
+    ..post(
+      "/confirm_parent_device",
+      (Request request) async {
+        if (kDebugMode) {
+          print("[CHILD] Received confirmation from parent device.");
+        }
 
-      var snapshot = await request.readAsString();
-      await _request<bool>((Requests.overrideGlobalState, snapshot));
+        var snapshot = await request.readAsString();
+        await _send((Requests.overrideGlobalState, snapshot));
 
-      return Response.ok("Confirmed parent device");
-    })
-    ..post("/sync_click", (Request request) async {
-      try {
-        var newCount = await request.readAsString().then(int.parse);
+        return Response.ok("Confirmed parent device");
+      },
+    )
+    ..post(
+      "/sync_click",
+      (Request request) async {
+        try {
+          var newCount = await request.readAsString().then(int.parse);
 
-        /// Update the local state.
-        await _request<bool>((Requests.syncClicks, newCount));
+          /// Update the local state.
+          await _send((Requests.syncClicks, newCount));
 
-        return Response.ok(newCount);
-      } on Exception catch (e) {
-        return Response.internalServerError(body: e.toString());
-      }
-    });
+          return Response.ok(newCount.toString());
+        } on Exception catch (e) {
+          return Response.internalServerError(body: e.toString());
+        }
+      },
+    );
+
+  Future<void> _send((String, Object?) request) async {
+    sendPort.send(request);
+  }
 
   /// Sends a request to the main isolate and returns the response.
   ///   This is a blocking operation.
   ///   There should be an appropriate handler in the main isolate.
-  Future<T?> _request<T extends Object>(Object? request) async {
+  Future<T?> _request<T extends Object>((String, Object?) request) async {
     var completer = Completer<T>();
     _receiveCompleter = completer;
     sendPort.send(request);

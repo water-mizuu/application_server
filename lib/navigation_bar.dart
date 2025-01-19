@@ -1,7 +1,7 @@
 import "dart:io";
 
 import "package:application_server/maximize_or_restore_button.dart";
-import "package:application_server/server_manager.dart";
+import "package:application_server/backend/server_manager.dart";
 import "package:bitsdojo_window/bitsdojo_window.dart";
 import "package:fluent_ui/fluent_ui.dart";
 import "package:flutter/foundation.dart";

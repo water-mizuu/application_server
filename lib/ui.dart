@@ -3,7 +3,7 @@ import "dart:io";
 
 import "package:application_server/global_state.dart";
 import "package:application_server/navigation_bar.dart";
-import "package:application_server/server_manager.dart";
+import "package:application_server/backend/server_manager.dart";
 import "package:file_picker/file_picker.dart";
 import "package:fluent_ui/fluent_ui.dart" hide ButtonStyle;
 import "package:flutter/foundation.dart";

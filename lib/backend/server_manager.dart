@@ -4,7 +4,7 @@ import "dart:io";
 import "package:application_server/future_not_null.dart";
 import "package:application_server/global_state.dart";
 import "package:application_server/main.dart";
-import "package:application_server/shelf.dart";
+import "package:application_server/backend/shelf.dart";
 import "package:application_server/zip.dart";
 import "package:fluent_ui/fluent_ui.dart";
 import "package:flutter/foundation.dart";
@@ -121,7 +121,7 @@ class ServerManager {
         sharedPreferences.remove("parent_port"),
       ).wait;
 
-      _currentServer = ShelfParentServer(globalState, this, ip, port);
+      _currentServer = ShelfParentServer(globalState, ip, port);
       await _currentServer!.startServer();
       yield ("message", "Started server at http://$ip:$port");
       yield ("done", "Server started");
@@ -175,12 +175,12 @@ class ServerManager {
         sharedPreferences.setInt("parent_port", parentPort),
       ).wait;
 
-      _currentServer = ShelfChildServer(globalState, this, ip, parentIp, parentPort);
+      _currentServer = ShelfChildServer(globalState, ip, parentIp, parentPort);
       await _currentServer!.startServer();
       port = _currentServer!.port;
       yield ("message", "Started server at http://$ip:$port");
 
-      var uri = Uri.parse("http://$parentIp:$parentPort/register_child_device/$ip/$port");
+      var uri = Uri.parse("http://$parentIp:$parentPort/register_child_device?ip=$ip&port=$port");
       var response = await http.post(uri).timeout(1.seconds);
       if (response.statusCode != 200) {
         throw Exception("Failed to handshake with the parent device.");

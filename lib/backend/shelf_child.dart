@@ -7,8 +7,9 @@ final class ShelfChildServer implements ShelfServer {
     this.parentIp,
     this.parentPort,
   ) {
-    receivePort.listen((message) async {
-      assert(message is (String, Object?), "Each received data must have an identifier.");
+    receivePort.listen((payload) async {
+      var (id, message) = payload as (int, (String, Object?));
+      assert(message is (int, (String, Object?)), "Each received data must have an identifier.");
 
       switch (message) {
         case (Requests.syncClicks, int newCount):
@@ -66,7 +67,7 @@ final class ShelfChildServer implements ShelfServer {
     assert(RootIsolateToken.instance != null, "This should be run in the root isolate.");
     var rootIsolateToken = RootIsolateToken.instance!;
 
-    var serverIsolate = await Isolate.spawn(
+    await Isolate.spawn(
       _spawnIsolate,
       (rootIsolateToken, _setupReceivePort.sendPort, parentIp, parentPort),
     );
@@ -76,7 +77,6 @@ final class ShelfChildServer implements ShelfServer {
     if (kDebugMode) {
       print("[CHILD:Main] Send Port received:${serverSendPort.hashCode}");
     }
-    serverIsolate.addOnExitListener(serverSendPort);
 
     // Afterwards, the ACTUAL port of the server is received.
     port = await _setupReceivePort.next<int>();
@@ -133,31 +133,33 @@ final class ShelfChildServer implements ShelfServer {
   static Future<void> _spawnIsolate((RootIsolateToken, SendPort, String, int) payload) async {
     var (token, sendPort, parentIp, parentPort) = payload;
 
-    unawaited(_IsolatedChildServer(parentIp, parentPort).initialize(token, sendPort));
+    await _IsolatedChildServer(token, sendPort, parentIp, parentPort).initialize();
   }
 }
 
 final class _IsolatedChildServer implements IsolatedServer {
-  _IsolatedChildServer(this.parentIp, this.parentPort)
-      : assert(RootIsolateToken.instance == null, "This should be run in another isolate.");
+  _IsolatedChildServer(
+    RootIsolateToken token,
+    this.sendPort,
+    this.parentIp,
+    this.parentPort,
+  ) : assert(RootIsolateToken.instance == null, "This should be run in another isolate.") {
+    BackgroundIsolateBinaryMessenger.ensureInitialized(token);
+  }
 
   final String parentIp;
   final int parentPort;
 
-  /// A catcher of sorts for the receivePort listener.
-  /// Whenever we request something from the main isolate, we must assign a completer BEFOREHAND.
-  Completer<Object?>? _receiveCompleter;
+  late final Map<int, Completer<Object?>> receiveCompleters = {};
+  final List<(String, String)> childDevices = [];
+
+  final ReceivePort receivePort = ReceivePort();
+  final SendPort sendPort;
 
   late final AsyncQueue _jobQueue = AsyncQueue.autoStart();
 
-  final ReceivePort receivePort = ReceivePort();
-  late final SendPort sendPort;
-
-  Future<void> initialize(RootIsolateToken token, SendPort mainIsolateSendPort) async {
+  Future<void> initialize() async {
     try {
-      sendPort = mainIsolateSendPort;
-
-      BackgroundIsolateBinaryMessenger.ensureInitialized(token);
       sendPort.send(receivePort.sendPort);
 
       var (serverInstance, serverPort) = await _shelfInitiate(router, 0);
@@ -177,12 +179,16 @@ final class _IsolatedChildServer implements IsolatedServer {
           }
 
           switch (data) {
-            case ("requested", var v):
-              if (_receiveCompleter != null && !_receiveCompleter!.isCompleted) {
-                _receiveCompleter!.complete(v);
-              } else {
-                throw StateError("No completer was assigned for the received data: $v");
+            case ("requested", (int id, var v)):
+              assert(
+                receiveCompleters.containsKey(id),
+                "The completer must be assigned before the request.",
+              );
+              if (kDebugMode) {
+                print("[PARENT] Received request with id $id and data $v");
               }
+
+              receiveCompleters[id]!.complete(v);
             case ("click", int clicks):
               try {
                 var uri = Uri.parse("http://$parentIp:$parentPort/click");
@@ -277,20 +283,19 @@ final class _IsolatedChildServer implements IsolatedServer {
     sendPort.send(request);
   }
 
+  int _requestId = 0;
+
   /// Sends a request to the main isolate and returns the response.
   ///   This is a blocking operation.
   ///   There should be an appropriate handler in the main isolate.
   @override
   Future<T?> requestFromMain<T extends Object>((String, Object?) request) async {
-    if (_receiveCompleter != null) {
-      throw StateError("A completer is already assigned. Requests cannot be made concurrently.");
-    }
-
     var completer = Completer<T>();
-    _receiveCompleter = completer;
-    sendPort.send(request);
+    var id = _requestId++;
+    receiveCompleters[id] = completer;
+    sendPort.send((_requestId++, request));
     var response = await completer.future;
-    _receiveCompleter = null;
+    receiveCompleters.remove(id);
 
     return response;
   }

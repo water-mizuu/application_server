@@ -1,57 +1,43 @@
-// ignore_for_file: unreachable_from_main
+/// A helper library that makes it easier to work with ReceivePorts and SendPorts.
+///   It lets receive ports be used declaratively.
+library;
 
 import "dart:async";
+import "dart:collection";
 import "dart:isolate";
 
-import "package:flutter/foundation.dart";
-
 extension type ListenedReceivePort._(ReceivePort _port) {
-  factory ListenedReceivePort(
-    ReceivePort receivePort,
+  ListenedReceivePort(
+    this._port,
     FutureOr<void> Function(Object? message)? fallbackListener,
   ) {
-    var instance = ListenedReceivePort._(receivePort);
+    _hosts[_port] = true;
+    _fallbackListener = fallbackListener;
+    _completer = Queue();
+    _queue = Queue();
 
-    _hosts[receivePort] = true;
-    _fallbackListeners[receivePort] = fallbackListener;
+    assert(!_port.isBroadcast, "The receive port must not be a broadcast stream.");
 
-    /// A helper function that gets the fallback listener for the [receivePort].
-    ///   This is useful as the fallback listener can be added at a later time.
-    FutureOr<void> Function(Object? message)? getFallbackListener() =>
-        _fallbackListeners[receivePort];
+    _port.listen((message) async {
+      /// We add the message to the queue.
+      _queue.add(message);
 
-    assert(!receivePort.isBroadcast, "The receive port must not be a broadcast stream.");
-
-    receivePort.listen((message) async {
-      var completer = _completers[receivePort];
-
-      if (completer case Completer<void> completer) {
-        if (completer.isCompleted) {
-          if (kDebugMode) {
-            print("Received a message $message but the completer is already completed.");
-          }
-        }
-
+      /// If there is a completer waiting for a message, we complete it.
+      if (_completers[_port]!.firstOrNull case var completer?) {
         completer.complete(message);
+        _queue.removeLast();
+
         return;
       }
 
-      // if (kDebugMode) {
-      //   print("Received a message $message but there is no completer to complete it.");
-
-      //   if (getFallbackListener() != null) {
-      //     print("The fallback listener will be called instead.");
-      //   }
-      // }
-
-      if (getFallbackListener() case var fallbackListener?) {
-        _completers[receivePort] = null;
+      if (_fallbackListener case var fallbackListener?) {
+        _completers[_port] = null;
         await fallbackListener(message);
+        _queue.removeLast();
+
         return;
       }
     });
-
-    return instance;
   }
 
   /// This has the value of true for all ReceivePorts that can be listened to.
@@ -59,27 +45,38 @@ extension type ListenedReceivePort._(ReceivePort _port) {
   ///   However, they cannot be listened to again.
   static Expando<bool> _hosts = Expando();
 
+  /// A map of [ReceivePort]s with their fallback listeners.
   static Expando<void Function(Object? message)> _fallbackListeners = Expando();
+  static Expando<Queue<Completer<Object?>>> _completers = Expando();
+  static Expando<Queue<Object?>> _queues = Expando();
 
-  static Expando<Completer<void>> _completers = Expando();
+  // Pseudo-fields. These are used to store values specific to each [ReceivePort] instance.
+
+  FutureOr<void> Function(Object?)? get _fallbackListener => _fallbackListeners[_port];
+  set _fallbackListener(FutureOr<void> Function(Object?)? listener) =>
+      _fallbackListeners[_port] = listener;
+
+  Queue<Completer<Object?>> get _completer => _completers[_port]!;
+  set _completer(Queue<Completer<Object?>> completer) => _completers[_port] = completer;
+
+  Queue<Object?> get _queue => _queues[_port]!;
+  set _queue(Queue<Object?> queue) => _queues[_port] = queue;
 
   Future<T> next<T>() async {
-    assert(
-      _hosts[_port] ?? false,
-      "The [ReceivePort] must have [hostListener] called "
-      "before using the [next] extension method.",
-    );
+    if (_queue.isNotEmpty) {
+      return _queue.removeFirst() as T;
+    }
+
     var completer = Completer<dynamic>();
-    _completers[_port] = completer;
+    _completer.addLast(completer);
     var rawValue = await completer.future as Object?;
     assert(
       rawValue is T,
       "The value received from the [ReceivePort] must be of type $T. "
       "Got ${rawValue.runtimeType} instead",
     );
-
     var value = rawValue as T;
-    _completers[_port] = null;
+    _completer.removeFirst();
 
     return value;
   }
@@ -93,7 +90,7 @@ extension type ListenedReceivePort._(ReceivePort _port) {
 
   /// Closes the [ReceivePort] and removes all the listeners.
   void close() {
-    _hosts[_port] = false;
+    _hosts[_port] = null;
     _fallbackListeners[_port] = null;
     _completers[_port] = null;
     _port.close();

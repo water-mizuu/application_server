@@ -462,10 +462,6 @@ class ServerManager {
                                             ),
                                         ],
                                         onChanged: (newValue) {
-                                          if (kDebugMode) {
-                                            print("On changed: $newValue");
-                                          }
-
                                           if (newValue case var _?) {
                                             ipTextController.text = newValue;
                                           }

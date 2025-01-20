@@ -1,16 +1,18 @@
 import "dart:async";
 import "dart:io";
 
+import "package:application_server/backend/server_manager.dart";
 import "package:application_server/global_state.dart";
 import "package:application_server/navigation_bar.dart";
-import "package:application_server/backend/server_manager.dart";
 import "package:file_picker/file_picker.dart";
 import "package:fluent_ui/fluent_ui.dart" hide ButtonStyle;
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart" hide Colors, Divider, NavigationBar, showDialog;
 import "package:menu_bar/menu_bar.dart";
 import "package:provider/provider.dart";
+import "package:scroll_animator/scroll_animator.dart";
 import "package:system_theme/system_theme.dart";
+import "package:time/time.dart";
 
 class ApplicationWindow extends StatefulWidget {
   const ApplicationWindow({super.key});
@@ -28,22 +30,24 @@ class _ApplicationWindowState extends State<ApplicationWindow> {
 
     var serverManager = context.read<ServerManager>();
     if (kDebugMode) {
-      print(serverManager.shouldPromptServerStartOnBoot);
+      print("Should prompt server start on boot: ${serverManager.shouldPromptServerStartOnBoot}");
     }
 
     if (serverManager.shouldPromptServerStartOnBoot) {
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (_key.currentContext case BuildContext context when context.mounted) {
-          switch (serverManager.mode.value) {
-            case DeviceClassification.parent:
-              throw UnimplementedError();
-            case DeviceClassification.child:
-              await serverManager.childPressed(context);
-            case DeviceClassification.none:
-              throw UnimplementedError();
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => Future.delayed(1.seconds, () async {
+          if (_key.currentContext case BuildContext context when context.mounted) {
+            switch (serverManager.mode.value) {
+              case DeviceClassification.parent:
+                throw UnimplementedError();
+              case DeviceClassification.child:
+                await serverManager.childPressed(context);
+              case DeviceClassification.none:
+                throw UnimplementedError();
+            }
           }
-        }
-      });
+        }),
+      );
     }
   }
 
@@ -230,9 +234,15 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
+  late final AnimatedScrollController controller;
+
   @override
   void initState() {
     super.initState();
+
+    controller = AnimatedScrollController(
+      animationFactory: const ChromiumEaseInOut(),
+    );
   }
 
   @override
@@ -241,7 +251,8 @@ class _MyHomePageState extends State<MyHomePage> {
     var serverManager = context.read<ServerManager>();
 
     return Scaffold(
-      body: Center(
+      body: SingleChildScrollView(
+        controller: controller,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -289,7 +300,8 @@ class _MyHomePageState extends State<MyHomePage> {
                 child: const Text("Close"),
               ),
             ),
-            Expanded(
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16.0),
               child: Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,

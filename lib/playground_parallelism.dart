@@ -3,6 +3,8 @@
 import "dart:async";
 import "dart:isolate";
 
+import "package:flutter/foundation.dart";
+
 extension type ListenedReceivePort._(ReceivePort _port) {
   factory ListenedReceivePort(
     ReceivePort receivePort,
@@ -24,6 +26,12 @@ extension type ListenedReceivePort._(ReceivePort _port) {
       var completer = _completers[receivePort];
 
       if (completer case Completer<void> completer) {
+        if (completer.isCompleted) {
+          if (kDebugMode) {
+            print("Received a message $message but the completer is already completed.");
+          }
+        }
+
         completer.complete(message);
         return;
       }

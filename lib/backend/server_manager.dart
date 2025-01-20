@@ -1,17 +1,14 @@
 import "dart:async";
 import "dart:io";
 
-import "package:application_server/future_not_null.dart";
+import "package:application_server/backend/shelf.dart";
 import "package:application_server/global_state.dart";
 import "package:application_server/main.dart";
-import "package:application_server/backend/shelf.dart";
-import "package:application_server/zip.dart";
+import "package:application_server/network_tools.dart";
 import "package:fluent_ui/fluent_ui.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart" hide Colors, Divider, NavigationBar, showDialog;
-import "package:flutter/services.dart";
 import "package:http/http.dart" as http;
-import "package:network_info_plus/network_info_plus.dart";
 import "package:time/time.dart";
 
 enum DeviceClassification {
@@ -225,14 +222,8 @@ class ServerManager {
   }
 
   Future<void> parentPressed(BuildContext context) async {
-    var network = NetworkInfo();
-    var ip = await network.getWifiIP().notNull();
-    if (!context.mounted) {
-      return;
-    }
-
     var formKey = GlobalKey<FormState>();
-    var ipTextController = TextEditingController()..text = ip;
+    var ipTextController = TextEditingController()..text = deviceIp;
     var portTextController = TextEditingController();
     if (parentAddress.value case (_, var port)) {
       portTextController.text = port.toString();
@@ -262,7 +253,7 @@ class ServerManager {
                                 return "Please enter an IP address.";
                               }
 
-                              if (value != ip) {
+                              if (value != deviceIp) {
                                 return "You cannot host to other but yourself.";
                               }
 
@@ -379,16 +370,8 @@ class ServerManager {
   }
 
   Future<void> childPressed(BuildContext context) async {
-    var selfIp = await NetworkInfo().getWifiIP().notNull();
-    if (!context.mounted) {
-      return;
-    }
-
     // We delay if for a few milliseconds as to not block the UI thread.
-    var arpsFuture = Future.delayed(12.milliseconds, _resolveArpsInAnotherIsolate);
-    if (!context.mounted) {
-      return;
-    }
+    var ips = scanIps();
 
     var formKey = GlobalKey<FormState>();
     var ipTextController = TextEditingController();
@@ -421,34 +404,29 @@ class ServerManager {
                           children: [
                             const Stack(
                               children: [
+                                Text("IP: "),
                                 IgnorePointer(
                                   child: Opacity(
                                     opacity: 0.0,
                                     child: Text("Port: "),
                                   ),
                                 ),
-                                Text("IP: "),
                               ],
                             ),
                             Expanded(
                               child: FutureBuilder(
-                                future: arpsFuture,
+                                future: ips,
                                 builder: (context, snapshot) {
                                   switch (snapshot) {
                                     case AsyncSnapshot(connectionState: ConnectionState.none):
                                     case AsyncSnapshot(connectionState: ConnectionState.waiting):
                                     case AsyncSnapshot(connectionState: ConnectionState.active):
-                                    case AsyncSnapshot(
-                                        connectionState: ConnectionState.done,
-                                        hasData: false,
-                                      ):
-                                      return const SizedBox();
-                                    case AsyncSnapshot(
-                                        connectionState: ConnectionState.done,
-                                        hasData: true,
-                                        // ignore: unnecessary_null_checks
-                                        data: var arps!,
-                                      ):
+                                    case AsyncSnapshot(connectionState: ConnectionState.done):
+                                      if (!snapshot.hasData) {
+                                        return const SizedBox();
+                                      }
+                                      var arps = snapshot.data!;
+
                                       return DropdownButtonFormField(
                                         hint: const Text("Select a device"),
                                         validator: (ip) {
@@ -456,7 +434,7 @@ class ServerManager {
                                             return "Please select an IP address.";
                                           }
 
-                                          if (ip == selfIp) {
+                                          if (ip == deviceIp) {
                                             return "You cannot connect to yourself.";
                                           }
 
@@ -466,7 +444,21 @@ class ServerManager {
                                           for (var (name, ip) in arps)
                                             DropdownMenuItem(
                                               value: ip,
-                                              child: Text("$name ($ip)"),
+                                              child: Row(
+                                                children: [
+                                                  FutureBuilder(
+                                                    future: name,
+                                                    builder: (context, snapshot) {
+                                                      if (snapshot.data case String data) {
+                                                        return Text(data);
+                                                      }
+
+                                                      return const CircularProgressIndicator();
+                                                    },
+                                                  ),
+                                                  Text(" ($ip)"),
+                                                ],
+                                              ),
                                             ),
                                         ],
                                         onChanged: (newValue) {
@@ -535,7 +527,7 @@ class ServerManager {
 
                                 setState(() {
                                   serverStartStream = hostChild(
-                                    (selfIp, 0),
+                                    (deviceIp, 0),
                                     (parentIp, parentPort),
                                   );
                                 });
@@ -544,8 +536,14 @@ class ServerManager {
                             ),
                           ],
                         ),
-                        const Expanded(child: SizedBox()),
-                        if (serverStartStream case Stream<(String, Object)> serverStartStream)
+                        Expanded(
+                          child: Center(
+                            child: serverStartStream == null
+                                ? const SizedBox()
+                                : const CircularProgressIndicator(),
+                          ),
+                        ),
+                        if (serverStartStream case var serverStartStream?)
                           StreamBuilder(
                             stream: serverStartStream,
                             builder: (context, snapshot) {
@@ -638,64 +636,64 @@ class ServerManager {
   ShelfServer? _currentServer;
 }
 
-/// Returns a list of all the DETECTED devices in the network.
-/// The first item of the tuple is the name of the device (if detected).
-/// The second item of the tuple is the local IP address of the device.
-Future<List<(String, String)>> _resolveArpsInAnotherIsolate() async {
-  var result = await compute(
-    (token) async {
-      BackgroundIsolateBinaryMessenger.ensureInitialized(token);
+// /// Returns a list of all the DETECTED devices in the network.
+// /// The first item of the tuple is the name of the device (if detected).
+// /// The second item of the tuple is the local IP address of the device.
+// Future<List<(String, String)>> _resolveArpsInAnotherIsolate() async {
+//   var result = await compute(
+//     (token) async {
+//       BackgroundIsolateBinaryMessenger.ensureInitialized(token);
 
-      var ipAddresses = await _resolveArp();
-      var names = await Future.wait(ipAddresses.map(_resolveDeviceNameFromIp));
-      var zipped = names.zip(ipAddresses).toList();
+//       var ipAddresses = await _resolveArp();
+//       var names = await Future.wait(ipAddresses.map(_resolveDeviceNameFromIp));
+//       var zipped = names.zip(ipAddresses).toList();
 
-      return zipped;
-    },
-    RootIsolateToken.instance!,
-  );
+//       return zipped;
+//     },
+//     RootIsolateToken.instance!,
+//   );
 
-  return result;
-}
+//   return result;
+// }
 
-final RegExp _deviceArpRegEx = RegExp(r"(\S+)\s*\S+\s*\S+");
+// final RegExp _deviceArpRegEx = RegExp(r"(\S+)\s*\S+\s*\S+");
 
-/// Hopefully, this is okay as it is only tested in Windows 11.
-Future<List<String>> _resolveArp() async {
-  var values = await Process.run("arp", ["-a"]);
-  var stdout = (values.stdout as String).replaceAll("\r", "");
-  var results = stdout.split("\n").map((s) => s.trim()).toList();
-  var selfIp = await NetworkInfo().getWifiIP().notNull();
-  var subnet = selfIp.substring(0, selfIp.lastIndexOf("."));
-  var ipAddresses = results
-      .map((s) => _deviceArpRegEx.matchAsPrefix(s))
-      .where((s) => s != null)
-      .cast<Match>()
-      .map((s) => s.group(1)!)
-      .where((s) => s.startsWith(subnet))
-      .where((s) => s != selfIp && !{"$subnet.1", "$subnet.255"}.contains(s))
-      .toList();
+// /// Hopefully, this is okay as it is only tested in Windows 11.
+// Future<List<String>> _resolveArp() async {
+//   var values = await Process.run("arp", ["-a"]);
+//   var stdout = (values.stdout as String).replaceAll("\r", "");
+//   var results = stdout.split("\n").map((s) => s.trim()).toList();
+//   var selfIp = await NetworkInfo().getWifiIP().notNull();
+//   var subnet = selfIp.substring(0, selfIp.lastIndexOf("."));
+//   var ipAddresses = results
+//       .map((s) => _deviceArpRegEx.matchAsPrefix(s))
+//       .where((s) => s != null)
+//       .cast<Match>()
+//       .map((s) => s.group(1)!)
+//       .where((s) => s.startsWith(subnet))
+//       .where((s) => s != selfIp && !{"$subnet.1", "$subnet.255"}.contains(s))
+//       .toList();
 
-  return ipAddresses;
-}
+//   return ipAddresses;
+// }
 
-final RegExp _deviceNameRegex = RegExp(r"\s*Name:\s*(\S+)\s*");
+// final RegExp _deviceNameRegex = RegExp(r"\s*Name:\s*(\S+)\s*");
 
-Future<String> _resolveDeviceNameFromIp(String ip) async {
-  var values = await Process.run("nslookup", [ip]);
-  var stdout = (values.stdout as String).replaceAll("\r", "");
-  if (kDebugMode) {
-    print("ip: $ip \t stdout: $stdout");
-  }
-  var second = stdout //
-      .split("\n\n")
-      .map((s) => s.replaceAll("\n", " ").trim())
-      .where((s) => s.isNotEmpty)
-      .last;
+// Future<String> _resolveDeviceNameFromIp(String ip) async {
+//   var values = await Process.run("nslookup", [ip]);
+//   var stdout = (values.stdout as String).replaceAll("\r", "");
+//   if (kDebugMode) {
+//     print("ip: $ip \t stdout: $stdout");
+//   }
+//   var second = stdout //
+//       .split("\n\n")
+//       .map((s) => s.replaceAll("\n", " ").trim())
+//       .where((s) => s.isNotEmpty)
+//       .last;
 
-  if (_deviceNameRegex.matchAsPrefix(second) case Match match) {
-    return match.group(1)!;
-  } else {
-    return "Unnamed device";
-  }
-}
+//   if (_deviceNameRegex.matchAsPrefix(second) case Match match) {
+//     return match.group(1)!;
+//   } else {
+//     return "Unnamed device";
+//   }
+// }

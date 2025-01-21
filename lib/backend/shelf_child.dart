@@ -7,17 +7,18 @@ final class ShelfChildServer implements ShelfServer {
     this.parentIp,
     this.parentPort,
   ) {
-    receivePort.listen((payload) async {
-      var (id, message) = payload as (int, (String, Object?));
-      assert(message is (int, (String, Object?)), "Each received data must have an identifier.");
-
+    receivePort.listen((message) async {
+      assert(
+        message is (int, (String, Object?)) || message is (String, Object?),
+        "Each received data must have an identifier.",
+      );
       switch (message) {
-        case (Requests.syncClicks, int newCount):
+        case (int _, (Requests.syncClicks, int newCount)):
           _lockClicks = true;
           globalState.counter.value = newCount;
           _lockClicks = false;
-        case (Requests.overrideGlobalState, String snapshot):
-          var json = jsonDecode(snapshot) as Map<String, Object?>;
+        case (int _, (Requests.overrideGlobalState, String snapshot)):
+          var json = await compute(jsonDecode, snapshot) as Map<String, Object?>;
           _lockClicks = true;
           await globalState.synchronizeFromJson(json);
           _lockClicks = false;
@@ -57,7 +58,9 @@ final class ShelfChildServer implements ShelfServer {
   @override
   bool isStarted = false;
 
+  /// A flag that prevents the server from sending clicks to the parent device.
   bool _lockClicks = false;
+
   final ListenedReceivePort _setupReceivePort = ReceivePort().hostListener();
 
   @override
@@ -75,7 +78,7 @@ final class ShelfChildServer implements ShelfServer {
     // Our first expected value is the send port from the server isolate.
     serverSendPort = await _setupReceivePort.next<SendPort>();
     if (kDebugMode) {
-      print("[CHILD:Main] Send Port received:${serverSendPort.hashCode}");
+      print("[CHILD:Main] Send Port received:${serverSendPort.hashCode.bitLength}");
     }
 
     // Afterwards, the ACTUAL port of the server is received.

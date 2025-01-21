@@ -6,15 +6,17 @@ final class ShelfParentServer implements ShelfServer {
     this.ip,
     this.port,
   ) {
-    _receivePort.listen((payload) async {
-      assert(payload is (int, (String, Object?)), "Each received data must have an identifier.");
+    _receivePort.listen((message) async {
+      assert(
+        message is (int, (String, Object?)) || message is (String, Object?),
+        "Each received data must have an identifier.",
+      );
 
-      var (id, message) = payload as (int, (String, Object?));
       switch (message) {
-        case (Requests.click, _):
+        case (int id, (Requests.click, _)):
           _globalState.counter.value++;
           _serverSendPort.send(("requested", (id, _globalState.counter.value)));
-        case (Requests.globalStateSnapshot, _):
+        case (int id, (Requests.globalStateSnapshot, _)):
           _serverSendPort.send(("requested", (id, jsonEncode(_globalState.toJson()))));
         case (Requests.requestClose, _):
           await stopServer();
@@ -22,7 +24,7 @@ final class ShelfParentServer implements ShelfServer {
           closeCompleter.complete(0);
         case _:
           if (kDebugMode) {
-            print("[PARENT:Main] Received: $message");
+            print("[PARENT:Main] Received message: $message");
           }
       }
     });

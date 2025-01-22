@@ -13,11 +13,11 @@ final class ShelfChildServer implements ShelfServer {
         "Each received data must have an identifier.",
       );
       switch (message) {
-        case (int _, (Requests.syncClicks, int newCount)):
+        case (Requests.syncClicks, int newCount):
           _lockClicks = true;
           globalState.counter.value = newCount;
           _lockClicks = false;
-        case (int _, (Requests.overrideGlobalState, String snapshot)):
+        case (Requests.overrideGlobalState, String snapshot):
           var json = await compute(jsonDecode, snapshot) as Map<String, Object?>;
           _lockClicks = true;
           await globalState.synchronizeFromJson(json);
@@ -296,7 +296,7 @@ final class _IsolatedChildServer implements IsolatedServer {
     var completer = Completer<T>();
     var id = _requestId++;
     receiveCompleters[id] = completer;
-    sendPort.send((_requestId++, request));
+    sendPort.send((id, request));
     var response = await completer.future;
     receiveCompleters.remove(id);
 

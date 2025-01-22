@@ -23,7 +23,7 @@ extension type ListenedReceivePort._(ReceivePort _port) {
       _queue.add(message);
 
       /// If there is a completer waiting for a message, we complete it.
-      if (_completers[_port]!.firstOrNull case var completer?) {
+      if (_completers[_port]?.firstOrNull case var completer?) {
         completer.complete(message);
         _queue.removeLast();
 

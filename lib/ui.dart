@@ -3,7 +3,6 @@ import "dart:io";
 
 import "package:application_server/backend/server_manager.dart";
 import "package:application_server/global_state.dart";
-import "package:application_server/navigation_bar.dart";
 import "package:file_picker/file_picker.dart";
 import "package:fluent_ui/fluent_ui.dart" hide ButtonStyle;
 import "package:flutter/foundation.dart";
@@ -79,145 +78,140 @@ class _ApplicationWindowState extends State<ApplicationWindow> {
 
               return true;
             },
-            child: Column(
-              children: [
-                const NavigationBar(),
-                Expanded(
-                  child: Builder(
-                    builder: (context) {
-                      var widget = const MyHomePage() as Widget;
+            child: Builder(
+              builder: (context) {
+                var widget = const MyHomePage() as Widget;
 
-                      if (Platform.isMacOS) {
-                        /// This is the macOS menu bar.
-                        widget = PlatformMenuBar(
-                          menus: [
-                            PlatformMenu(
-                              label: "The first menu.",
-                              menus: [
-                                /// Apparently, if the first menu is empty,
-                                ///   the application name is not displayed.
-                                PlatformMenuItem(
-                                  label: "About",
-                                  onSelected: () {},
-                                ),
-                              ],
+                if (Platform.isMacOS) {
+                  /// This is the macOS menu bar.
+                  widget = PlatformMenuBar(
+                    menus: [
+                      PlatformMenu(
+                        label: "The first menu.",
+                        menus: [
+                          /// Apparently, if the first menu is empty,
+                          ///   the application name is not displayed.
+                          PlatformMenuItem(
+                            label: "About",
+                            onSelected: () {},
+                          ),
+                        ],
+                      ),
+                      PlatformMenu(
+                        label: "File",
+                        menus: [
+                          PlatformMenuItemGroup(
+                            members: <PlatformMenuItem>[
+                              PlatformMenuItem(
+                                label: "Open",
+                                onSelected: () async {
+                                  if (kDebugMode) {
+                                    print("Opening a file.");
+                                  }
+
+                                  var result = await FilePicker.platform.pickFiles();
+                                  if (result == null) {
+                                    return;
+                                  }
+
+                                  if (kDebugMode) {
+                                    print(result.names);
+                                  }
+                                },
+                              ),
+                              PlatformMenuItem(
+                                label: "Exit",
+                                onSelected: () {
+                                  if (kDebugMode) {
+                                    print("Hi");
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ],
+                    child: widget,
+                  );
+                } else if (Platform.isWindows) {
+                  /// This is the Windows menu bar.
+                  widget = MenuBarWidget(
+                    barStyle: const MenuStyle(
+                      padding: WidgetStatePropertyAll(EdgeInsets.zero),
+                      backgroundColor: WidgetStatePropertyAll(Colors.white),
+                      shape: WidgetStatePropertyAll(RoundedRectangleBorder()),
+                    ),
+                    barButtonStyle: ButtonStyle(
+                      textStyle: const WidgetStatePropertyAll(TextStyle()),
+                      backgroundColor: WidgetStateProperty.resolveWith((states) {
+                        if (states.contains(WidgetState.hovered)) {
+                          return Colors.black.withValues(alpha: 0.05);
+                        }
+                        return Colors.white;
+                      }),
+                      minimumSize: const WidgetStatePropertyAll(Size.zero),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    menuButtonStyle: const ButtonStyle(
+                      textStyle: WidgetStatePropertyAll(TextStyle()),
+                      padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12.0)),
+                      backgroundColor: WidgetStatePropertyAll(Colors.white),
+                      minimumSize: WidgetStatePropertyAll(Size.zero),
+                      iconSize: WidgetStatePropertyAll(16.0),
+                    ),
+                    // The buttons in this List are displayed as the buttons on the bar itself
+                    barButtons: [
+                      BarButton(
+                        text: const Text("File"),
+                        submenu: SubMenu(
+                          menuItems: [
+                            MenuButton(
+                              text: const Text("Open"),
+                              onTap: () async {
+                                if (kDebugMode) {
+                                  print("Opening a file.");
+                                }
+
+                                var result = await FilePicker.platform.pickFiles();
+                                if (result == null) {
+                                  return;
+                                }
+
+                                if (kDebugMode) {
+                                  print(result.names);
+                                }
+                              },
+                              shortcutText: "Ctrl+O",
                             ),
-                            PlatformMenu(
-                              label: "File",
-                              menus: [
-                                PlatformMenuItemGroup(
-                                  members: <PlatformMenuItem>[
-                                    PlatformMenuItem(
-                                      label: "Open",
-                                      onSelected: () async {
-                                        if (kDebugMode) {
-                                          print("Opening a file.");
-                                        }
-
-                                        var result = await FilePicker.platform.pickFiles();
-                                        if (result == null) {
-                                          return;
-                                        }
-
-                                        if (kDebugMode) {
-                                          print(result.names);
-                                        }
-                                      },
-                                    ),
-                                    PlatformMenuItem(
-                                      label: "Exit",
-                                      onSelected: () {
-                                        if (kDebugMode) {
-                                          print("Hi");
-                                        }
-                                      },
-                                    ),
-                                  ],
-                                ),
-                              ],
+                            MenuButton(
+                              text: const Text("Exit"),
+                              onTap: () {},
+                              shortcutText: "Ctrl+Q",
                             ),
                           ],
-                          child: widget,
-                        );
-                      } else if (Platform.isWindows) {
-                        /// This is the Windows menu bar.
-                        widget = MenuBarWidget(
-                          barStyle: const MenuStyle(
-                            padding: WidgetStatePropertyAll(EdgeInsets.zero),
-                            backgroundColor: WidgetStatePropertyAll(Colors.white),
-                            shape: WidgetStatePropertyAll(RoundedRectangleBorder()),
-                          ),
-                          barButtonStyle: ButtonStyle(
-                            textStyle: const WidgetStatePropertyAll(TextStyle()),
-                            backgroundColor: WidgetStateProperty.resolveWith((states) {
-                              if (states.contains(WidgetState.hovered)) {
-                                return Colors.black.withValues(alpha: 0.05);
-                              }
-                              return Colors.white;
-                            }),
-                            minimumSize: const WidgetStatePropertyAll(Size.zero),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
-                          menuButtonStyle: const ButtonStyle(
-                            textStyle: WidgetStatePropertyAll(TextStyle()),
-                            padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12.0)),
-                            backgroundColor: WidgetStatePropertyAll(Colors.white),
-                            minimumSize: WidgetStatePropertyAll(Size.zero),
-                            iconSize: WidgetStatePropertyAll(16.0),
-                          ),
-                          // The buttons in this List are displayed as the buttons on the bar itself
-                          barButtons: [
-                            BarButton(
-                              text: const Text("File"),
-                              submenu: SubMenu(
-                                menuItems: [
-                                  MenuButton(
-                                    text: const Text("Open"),
-                                    onTap: () async {
-                                      if (kDebugMode) {
-                                        print("Opening a file.");
-                                      }
-
-                                      var result = await FilePicker.platform.pickFiles();
-                                      if (result == null) {
-                                        return;
-                                      }
-
-                                      if (kDebugMode) {
-                                        print(result.names);
-                                      }
-                                    },
-                                    shortcutText: "Ctrl+O",
-                                  ),
-                                  MenuButton(
-                                    text: const Text("Exit"),
-                                    onTap: () {},
-                                    shortcutText: "Ctrl+Q",
-                                  ),
-                                ],
-                              ),
-                            ),
-                            BarButton(
-                              text: const Text("Help"),
-                              submenu: SubMenu(
-                                menuItems: [
-                                  MenuButton(
-                                    text: const Text("About"),
-                                    onTap: () {},
-                                  ),
-                                ],
-                              ),
+                        ),
+                      ),
+                      BarButton(
+                        text: const Text("Help"),
+                        submenu: SubMenu(
+                          menuItems: [
+                            MenuButton(
+                              text: const Text("About"),
+                              onTap: () {},
                             ),
                           ],
-                          child: widget,
-                        );
-                      }
+                        ),
+                      ),
+                    ],
+                    child: widget,
+                  );
+                } else {
+                  widget = SafeArea(child: widget);
+                }
 
-                      return widget;
-                    },
-                  ),
-                ),
-              ],
+                return widget;
+              },
             ),
           );
         },

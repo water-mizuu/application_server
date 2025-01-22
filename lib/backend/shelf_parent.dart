@@ -310,7 +310,7 @@ final class _IsolatedParentServer implements IsolatedServer {
     var completer = Completer<T>();
     var id = _requestId++;
     receiveCompleters[id] = completer;
-    sendPort.send((_requestId++, request));
+    sendPort.send((id, request));
     var response = await completer.future;
     receiveCompleters.remove(id);
 

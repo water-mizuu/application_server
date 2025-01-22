@@ -4,7 +4,6 @@ import "package:application_server/backend/server_manager.dart";
 import "package:application_server/global_state.dart";
 import "package:application_server/network_tools.dart";
 import "package:application_server/ui.dart";
-import "package:bitsdojo_window/bitsdojo_window.dart";
 import "package:fluent_ui/fluent_ui.dart";
 import "package:flutter/material.dart";
 import "package:provider/provider.dart";
@@ -19,6 +18,8 @@ Future<void> main() async {
   sharedPreferences = await SharedPreferences.getInstance();
 
   // /// Setup for network tools
+  // TODO: Create a fallback for when network tools takes too long.
+  //  - Preferrably manual input.
   await initializeNetworkTools();
 
   /// The only shared state between the main isolate and the server isolate.
@@ -35,13 +36,4 @@ Future<void> main() async {
       child: const ApplicationWindow(),
     ),
   );
-
-  doWhenWindowReady(() {
-    const initialSize = Size(600, 450);
-    appWindow.minSize = initialSize;
-    appWindow.size = initialSize;
-    appWindow.alignment = Alignment.center;
-    appWindow.title = "Application Server";
-    appWindow.show();
-  });
 }

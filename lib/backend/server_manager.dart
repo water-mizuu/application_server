@@ -55,7 +55,7 @@ class ServerManager {
     ///    - Set the mode to the stored value.
     /// If it is not stored:
     ///    - Set the mode to unspecified.
-    if (sharedPreferences.getInt("mode") case int storedMode) {
+    if (sharedPreferences.getInt("mode") case var storedMode?) {
       mode.value = DeviceClassification.values[storedMode];
 
       switch (mode.value) {
@@ -94,6 +94,7 @@ class ServerManager {
       }
     } else {
       mode.value = DeviceClassification.none;
+      shouldPromptServerStartOnBoot = false;
     }
   }
 
@@ -104,7 +105,7 @@ class ServerManager {
 
     var completedWithError = true;
     try {
-      if (_currentServer case ShelfServer server when server.isStarted) {
+      if (_currentServer case var server? when server.isStarted) {
         yield ("message", "Closing the existing server at http://${server.ip}:${server.port}");
         await server.stopServer();
         yield ("message", "Closed the server.");
@@ -150,8 +151,8 @@ class ServerManager {
   }
 
   Stream<(String, Object)> _hostChild(Address local, Address parent) async* {
-    var (String ip, int port) = local;
-    var (String parentIp, int parentPort) = parent;
+    var (ip, port) = local;
+    var (parentIp, parentPort) = parent;
 
     address.value = null;
     parentAddress.value = null;
@@ -371,7 +372,7 @@ class ServerManager {
 
   Future<void> childPressed(BuildContext context) async {
     // We delay if for a few milliseconds as to not block the UI thread.
-    var ips = scanIps();
+    var ips = scanIps().timeout(5.seconds);
 
     var formKey = GlobalKey<FormState>();
     var ipTextController = TextEditingController();
@@ -422,6 +423,22 @@ class ServerManager {
                                     case AsyncSnapshot(connectionState: ConnectionState.waiting):
                                     case AsyncSnapshot(connectionState: ConnectionState.active):
                                     case AsyncSnapshot(connectionState: ConnectionState.done):
+                                      if (snapshot.hasError) {
+                                        return TextFormField(
+                                          controller: ipTextController,
+                                          validator: (ip) {
+                                            if (ip == null || ip.isEmpty) {
+                                              return "Please select an IP address.";
+                                            }
+
+                                            if (ip == deviceIp) {
+                                              return "You cannot connect to yourself.";
+                                            }
+
+                                            return null;
+                                          },
+                                        );
+                                      }
                                       if (!snapshot.hasData) {
                                         return const SizedBox();
                                       }

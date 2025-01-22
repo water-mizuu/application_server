@@ -1,1 +1,5 @@
 POST http://192.168.1.251:5555/register_child_device?ip=192.168.1.84&port=0404
+
+
+# Test
+POST http://10.147.187.31:40407/sync_click/

@@ -14,7 +14,6 @@ library;
 
 import "dart:async";
 import "dart:convert";
-import "dart:io";
 import "dart:isolate";
 
 import "package:application_server/future_not_null.dart";
@@ -28,7 +27,9 @@ import "package:network_info_plus/network_info_plus.dart";
 import "package:shelf/shelf.dart";
 import "package:shelf/shelf_io.dart" as shelf_io;
 import "package:shelf_router/shelf_router.dart";
+import "package:shelf_web_socket/shelf_web_socket.dart";
 import "package:time/time.dart";
+import "package:web_socket_channel/web_socket_channel.dart";
 
 part "shelf_child.dart";
 part "shelf_parent.dart";
@@ -70,22 +71,31 @@ class Requests {
 ///   There is no guarantee that the port will be the same as the one provided.
 ///   (i.e if the [port] is 0, the port will be randomly assigned.
 ///    Otherwise, the port will be the same as the one provided.)
-Future<(HttpServer, int)> _shelfInitiate(Router router, int port) async {
+Future<int> _shelfInitiate(
+  FutureOr<void> Function(WebSocketChannel channel) onConnect,
+  int port,
+) async {
   var network = NetworkInfo();
 
-  var cascade = Cascade() //
-      .add(router.call);
-
-  var process = const Pipeline() //
-      .addMiddleware(logRequests())
-      .addHandler(cascade.handler);
-
   var ip = await network.getWifiIP().notNull();
-  var server = await shelf_io.serve(process, ip, port);
+  var handler = webSocketHandler((WebSocketChannel channel) {
+    /// This closure is only called whenever a connection is established.
+    ///   How can this be exposed to the class?
+    if (kDebugMode) {
+      print("Websocket initialized.");
+    }
+    // Handle the web socket here.
+
+    channel.stream.listen((message) {
+      channel.sink.add("echo: $message");
+    });
+  });
+  var server = await shelf_io.serve(handler, ip, port);
+  // var server = await shelf_io.serve(process, ip, port);
 
   if (kDebugMode) {
     print("[:Server] Serving at $ip:$port");
   }
 
-  return (server, server.port);
+  return server.port;
 }

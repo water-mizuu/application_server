@@ -145,7 +145,10 @@ final class _IsolatedParentServer implements IsolatedServer {
     try {
       sendPort.send(receivePort.sendPort);
 
-      var (serverInstance, serverPort) = await _shelfInitiate(router, port);
+      var serverPort = await _shelfInitiate(
+        (channel) async {},
+        port,
+      );
 
       /// Initialize the receivePort listener.
       ///   I have no idea how to make this better.
@@ -213,7 +216,7 @@ final class _IsolatedParentServer implements IsolatedServer {
               print("[PARENT] Stopping server.");
             }
 
-            await serverInstance.close();
+            // await serverInstance.close();
             receivePort.close();
             sendPort.send(("confirmClose", null));
         }

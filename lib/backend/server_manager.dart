@@ -8,7 +8,6 @@ import "package:application_server/network_tools.dart";
 import "package:fluent_ui/fluent_ui.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart" hide Colors, Divider, NavigationBar, showDialog;
-import "package:http/http.dart" as http;
 import "package:time/time.dart";
 
 enum DeviceClassification {
@@ -64,21 +63,23 @@ class ServerManager {
           var port = sharedPreferences.getInt("port")!;
 
           var encounteredError = true;
-          await for (var (type, _) in hostParent((ip, port))) {
-            if (type == "done") {
-              encounteredError = false;
+          if (ip != deviceIp) {
+            encounteredError = true;
+          } else {
+            await for (var (type, _) in hostParent((ip, port))) {
+              if (type == "done") {
+                encounteredError = false;
+              }
             }
           }
 
           shouldPromptServerStartOnBoot = encounteredError;
         case DeviceClassification.child:
-          var ip = sharedPreferences.getString("ip")!;
-          var port = sharedPreferences.getInt("port")!;
           var parentIp = sharedPreferences.getString("parent_ip")!;
           var parentPort = sharedPreferences.getInt("parent_port")!;
 
           var encounteredError = true;
-          await for (var (type, _) in hostChild((ip, port), (parentIp, parentPort))) {
+          await for (var (type, _) in hostChild((parentIp, parentPort))) {
             if (type == "done") {
               encounteredError = false;
             }
@@ -105,12 +106,24 @@ class ServerManager {
 
     var completedWithError = true;
     try {
-      if (_currentServer case var server? when server.isStarted) {
-        yield ("message", "Closing the existing server at http://${server.ip}:${server.port}");
-        await server.stopServer();
-        yield ("message", "Closed the server.");
+      switch (_currentServer) {
+        case ChildConnection server:
+          yield ("message", "Closing the existing server at ws://${server.ip}:${server.port}");
+          await server.stopServer();
+          yield ("message", "Closed the server.");
+        case ShelfChildServer server:
+          await server.stopServer();
+        case null:
+          break;
       }
 
+      _currentServer = ChildConnection(globalState, ip, port);
+      await _currentServer!.startServer();
+      yield ("message", "Started server at http://$ip:$port");
+      yield ("done", "Server started");
+      address.value = (ip, port);
+      parentAddress.value = null;
+      mode.value = DeviceClassification.parent;
       await (
         sharedPreferences.setInt("mode", DeviceClassification.parent.index),
         sharedPreferences.setString("ip", ip),
@@ -118,14 +131,6 @@ class ServerManager {
         sharedPreferences.remove("parent_ip"),
         sharedPreferences.remove("parent_port"),
       ).wait;
-
-      _currentServer = ShelfParentServer(globalState, ip, port);
-      await _currentServer!.startServer();
-      yield ("message", "Started server at http://$ip:$port");
-      yield ("done", "Server started");
-      address.value = (ip, port);
-      parentAddress.value = null;
-      mode.value = DeviceClassification.parent;
       completedWithError = false;
     } on SocketException catch (e) {
       yield ("exception", e);
@@ -136,7 +141,14 @@ class ServerManager {
         address.value = null;
         parentAddress.value = null;
         mode.value = DeviceClassification.none;
-        await closeServer();
+        await stopServer();
+        await (
+          sharedPreferences.remove("mode"),
+          sharedPreferences.remove("ip"),
+          sharedPreferences.remove("port"),
+          sharedPreferences.remove("parent_ip"),
+          sharedPreferences.remove("parent_port"),
+        ).wait;
       }
     }
   }
@@ -150,8 +162,7 @@ class ServerManager {
     }
   }
 
-  Stream<(String, Object)> _hostChild(Address local, Address parent) async* {
-    var (ip, port) = local;
+  Stream<(String, Object)> _hostChild(Address parent) async* {
     var (parentIp, parentPort) = parent;
 
     address.value = null;
@@ -159,39 +170,28 @@ class ServerManager {
 
     var completedWithError = true;
     try {
-      if (_currentServer case ShelfServer server when server.isStarted) {
-        yield ("message", "Closing the existing server at http://${server.ip}:${server.port}");
-        await server.stopServer();
-        yield ("message", "Closed the server.");
+      switch (_currentServer) {
+        case ChildConnection server:
+          yield ("message", "Closing the existing server at ws://${server.ip}:${server.port}");
+          await server.stopServer();
+          yield ("message", "Closed the server.");
+        case ShelfChildServer server:
+          await server.stopServer();
+        case null:
+          break;
       }
 
+      _currentServer = ShelfChildServer(globalState, parentIp, parentPort);
+      await _currentServer!.startServer();
+
+      address.value = null;
+      parentAddress.value = (parentIp, parentPort);
+      mode.value = DeviceClassification.child;
       await (
         sharedPreferences.setInt("mode", DeviceClassification.child.index),
-        sharedPreferences.setString("ip", ip),
-        sharedPreferences.setInt("port", port),
         sharedPreferences.setString("parent_ip", parentIp),
         sharedPreferences.setInt("parent_port", parentPort),
       ).wait;
-
-      _currentServer = ShelfChildServer(globalState, ip, parentIp, parentPort);
-      await _currentServer!.startServer();
-      port = _currentServer!.port;
-      yield ("message", "Started server at http://$ip:$port");
-
-      var uri = Uri.parse("http://$parentIp:$parentPort/register_child_device?ip=$ip&port=$port");
-      var response = await http.post(uri).timeout(1.seconds);
-      if (response.statusCode != 200) {
-        throw Exception("Failed to handshake with the parent device.");
-      }
-
-      /// Synchronize the data with the parent device.
-
-      yield ("message", "Handshaked with the parent device at http://$parentIp:$parentPort");
-      yield ("done", "Connection established");
-
-      address.value = (ip, port);
-      parentAddress.value = (parentIp, parentPort);
-      mode.value = DeviceClassification.child;
       completedWithError = false;
     } on TimeoutException catch (e) {
       if (kDebugMode) {
@@ -208,13 +208,23 @@ class ServerManager {
     } finally {
       /// If we had an error, we need to make sure that there is no server lingering.
       if (completedWithError) {
-        await closeServer();
+        address.value = null;
+        parentAddress.value = null;
+        mode.value = DeviceClassification.none;
+        await (
+          sharedPreferences.remove("mode"),
+          sharedPreferences.remove("ip"),
+          sharedPreferences.remove("port"),
+          sharedPreferences.remove("parent_ip"),
+          sharedPreferences.remove("parent_port"),
+        ).wait;
+        await stopServer();
       }
     }
   }
 
-  Stream<(String, Object)> hostChild(Address local, Address parent) async* {
-    await for (var (type, message) in _hostChild(local, parent)) {
+  Stream<(String, Object)> hostChild(Address parent) async* {
+    await for (var (type, message) in _hostChild(parent)) {
       if (kDebugMode) {
         print("[MAIN\$$type] $message");
       }
@@ -540,7 +550,6 @@ class ServerManager {
 
                                 setState(() {
                                   serverStartStream = hostChild(
-                                    (deviceIp, 0),
                                     (parentIp, parentPort),
                                   );
                                 });
@@ -617,7 +626,7 @@ class ServerManager {
 
   Future<void> cancelPressed() async {
     /// Close the existing server (if there is one.)
-    await closeServer();
+    await stopServer();
 
     /// Update the saved addresses and mode.
     address.value = null;
@@ -633,80 +642,42 @@ class ServerManager {
       sharedPreferences.remove("parent_port"),
     ).wait;
 
-    /// Reset the state.
+    ///   set the state.
     globalState.counter.value = 0;
   }
 
-  Future<void> closeServer() async {
+  Future<void> stopServer() async {
+    switch (_currentServer) {
+      case ChildConnection server:
+        await server.stopServer();
+      case ShelfChildServer server:
+        await server.stopServer();
+      case null:
+        break;
+    }
+
     isServerRunning.value = false;
     await _currentServer?.stopServer();
   }
 
+  Future<void> cleanLingering() async {
+    address.value = null;
+    parentAddress.value = null;
+    mode.value = DeviceClassification.none;
+    await (
+      sharedPreferences.remove("mode"),
+      sharedPreferences.remove("ip"),
+      sharedPreferences.remove("port"),
+      sharedPreferences.remove("parent_ip"),
+      sharedPreferences.remove("parent_port"),
+    ).wait;
+
+    await stopServer();
+  }
+
   Future<void> dispose() async {
-    await closeServer();
+    await stopServer();
   }
 
   ShelfServer? _currentServer;
 }
-
-// /// Returns a list of all the DETECTED devices in the network.
-// /// The first item of the tuple is the name of the device (if detected).
-// /// The second item of the tuple is the local IP address of the device.
-// Future<List<(String, String)>> _resolveArpsInAnotherIsolate() async {
-//   var result = await compute(
-//     (token) async {
-//       BackgroundIsolateBinaryMessenger.ensureInitialized(token);
-
-//       var ipAddresses = await _resolveArp();
-//       var names = await Future.wait(ipAddresses.map(_resolveDeviceNameFromIp));
-//       var zipped = names.zip(ipAddresses).toList();
-
-//       return zipped;
-//     },
-//     RootIsolateToken.instance!,
-//   );
-
-//   return result;
-// }
-
-// final RegExp _deviceArpRegEx = RegExp(r"(\S+)\s*\S+\s*\S+");
-
-// /// Hopefully, this is okay as it is only tested in Windows 11.
-// Future<List<String>> _resolveArp() async {
-//   var values = await Process.run("arp", ["-a"]);
-//   var stdout = (values.stdout as String).replaceAll("\r", "");
-//   var results = stdout.split("\n").map((s) => s.trim()).toList();
-//   var selfIp = await NetworkInfo().getWifiIP().notNull();
-//   var subnet = selfIp.substring(0, selfIp.lastIndexOf("."));
-//   var ipAddresses = results
-//       .map((s) => _deviceArpRegEx.matchAsPrefix(s))
-//       .where((s) => s != null)
-//       .cast<Match>()
-//       .map((s) => s.group(1)!)
-//       .where((s) => s.startsWith(subnet))
-//       .where((s) => s != selfIp && !{"$subnet.1", "$subnet.255"}.contains(s))
-//       .toList();
-
-//   return ipAddresses;
-// }
-
-// final RegExp _deviceNameRegex = RegExp(r"\s*Name:\s*(\S+)\s*");
-
-// Future<String> _resolveDeviceNameFromIp(String ip) async {
-//   var values = await Process.run("nslookup", [ip]);
-//   var stdout = (values.stdout as String).replaceAll("\r", "");
-//   if (kDebugMode) {
-//     print("ip: $ip \t stdout: $stdout");
-//   }
-//   var second = stdout //
-//       .split("\n\n")
-//       .map((s) => s.replaceAll("\n", " ").trim())
-//       .where((s) => s.isNotEmpty)
-//       .last;
-
-//   if (_deviceNameRegex.matchAsPrefix(second) case Match match) {
-//     return match.group(1)!;
-//   } else {
-//     return "Unnamed device";
-//   }
-// }

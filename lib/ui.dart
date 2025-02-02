@@ -101,7 +101,7 @@ class _ApplicationWindowState extends State<ApplicationWindow> {
                         label: "File",
                         menus: [
                           PlatformMenuItemGroup(
-                            members: <PlatformMenuItem>[
+                            members: [
                               PlatformMenuItem(
                                 label: "Open",
                                 onSelected: () async {
@@ -258,14 +258,14 @@ class _MyHomePageState extends State<MyHomePage> {
               valueListenable: serverManager.address,
               builder: (_, value, __) => switch (value) {
                 null => const SizedBox(),
-                (var ip, var port) => Text("Currently hosting at http://$ip:$port"),
+                (var ip, var port) => Text("Currently hosting at ws://$ip:$port"),
               },
             ),
             ValueListenableBuilder(
               valueListenable: serverManager.parentAddress,
               builder: (_, value, __) => switch (value) {
                 null => const SizedBox(),
-                (var ip, var port) => Text("Currently connected to http://$ip:$port"),
+                (var ip, var port) => Text("Currently connected to ws://$ip:$port"),
               },
             ),
             Row(

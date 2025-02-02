@@ -67,7 +67,7 @@ extension type ListenedReceivePort._(ReceivePort _port) {
       return _queue.removeFirst() as T;
     }
 
-    var completer = Completer<dynamic>();
+    var completer = Completer<void>();
     _completer.addLast(completer);
     var rawValue = await completer.future as Object?;
     assert(
@@ -80,6 +80,8 @@ extension type ListenedReceivePort._(ReceivePort _port) {
 
     return value;
   }
+
+  Future<T> call<T>() => next<T>();
 
   /// Redirects all the messages received by the [ReceivePort] to the [sendPort].
   void redirectMessagesTo(SendPort sendPort) {

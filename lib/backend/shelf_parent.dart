@@ -1,7 +1,10 @@
 part of "shelf.dart";
 
-final class ChildConnection implements ShelfServer {
-  ChildConnection(
+/// Is the main class handling the connection of the application to
+///   the parent server.
+final class HostServer implements ShelfServer {
+  HostServer(
+    this._dialog,
     this._globalState,
     this.ip,
     this.port,
@@ -12,6 +15,7 @@ final class ChildConnection implements ShelfServer {
   final String ip;
   late final int port;
 
+  final IsolateDialog _dialog;
   final GlobalState _globalState;
 
   final ListenedReceivePort _startupReceivePort = ReceivePort().hostListener();
@@ -42,14 +46,10 @@ final class ChildConnection implements ShelfServer {
     );
 
     _serverSendPort = await _startupReceivePort.next<SendPort>();
-    if (kDebugMode) {
-      print("[PARENT:Main] Main Isolate Send Port received");
-    }
+    printDebug("Main Isolate Send Port received");
 
     var acknowledgement = await _startupReceivePort.next<Object>();
-    if (kDebugMode) {
-      print("[PARENT:Main] Acknowledgement received: $acknowledgement");
-    }
+    printDebug("Acknowledgement received: $acknowledgement");
 
     if (acknowledgement == 1) {
       startCompleter.complete(1);
@@ -107,12 +107,12 @@ final class ChildConnection implements ShelfServer {
         _incrementCounter(id);
       case (int id, (Requests.globalStateSnapshot, _)):
         _sendBackGlobalState(id);
+      case (int id, (Requests.showDialog, String message)):
+        await _showDialog(id, message);
       case (Requests.confirmClose, _):
         closeCompleter.complete(0);
       case _:
-        if (kDebugMode) {
-          print("[PARENT:Main] Received message: $message");
-        }
+        printDebug("Received message: $message");
     }
   }
 
@@ -129,8 +129,14 @@ final class ChildConnection implements ShelfServer {
     _serverSendPort.send(("requested", (id, json)));
   }
 
+  Future<void> _showDialog(int id, String message) async {
+    await _dialog.showDialog(message);
+
+    _serverSendPort.send(("requested", (id, true)));
+  }
+
   /// Spawns the server in another isolate.
-  ///   It is critical that this METHOD does not see any of the fields of the [ChildConnection] class.
+  ///   It is critical that this METHOD does not see any of the fields of the [HostServer] class.
   static Future<void> _spawnIsolate((RootIsolateToken, SendPort, int) payload) async {
     var (token, sendPort, port) = payload;
 
@@ -172,70 +178,11 @@ final class _IsolatedParentServer {
     }
   }
 
-  // /// The router used by the shelf router. Define all routes here.
-  // late final Router router = Router() //
-  //   ..post(
-  //     "/register_child_device",
-  //     (Request request) => runJob(() async {
-  //       switch (request.url.queryParameters) {
-  //         case {"ip": var deviceIp, "port": var devicePort}:
-  //           {
-  //             try {
-  //               /// Whenever a child device registers, we do a handshake.
-  //               /// First, we ping the child device to confirm its existence.
-  //               /// Then, we add it to the list of child devices.
-
-  //               if (kDebugMode) {
-  //                 print("[PARENT] Received registration from $deviceIp:$devicePort");
-  //               }
-
-  //               if (childDevices.contains((deviceIp, devicePort))) {
-  //                 return Response.badRequest(body: "Device already registered.");
-  //               }
-
-  //               var state = await requestFromMain<String>((Requests.globalStateSnapshot, null));
-  //               if (kDebugMode) {
-  //                 print("[PARENT] Received state snapshot $state");
-  //               }
-  //               var uri = Uri.parse("http://$deviceIp:$devicePort/confirm_parent_device");
-  //               var response = await http.post(uri, body: state).timeout(250.milliseconds);
-  //               if (response.statusCode != 200) {
-  //                 return Response.badRequest(body: "Failed to confirm the device.");
-  //               }
-
-  //               childDevices.add((deviceIp, devicePort));
-
-  //               return Response.ok("Registered $deviceIp:$devicePort");
-  //             } on TimeoutException {
-  //               return Response.badRequest(
-  //                 body: "Failed to ping the device at $deviceIp:$devicePort.",
-  //               );
-  //             }
-  //           }
-  //         case {"ip": _}:
-  //           return Response.badRequest(body: "The port must be provided under the key 'ip'.");
-  //         case {"port": _}:
-  //           return Response.badRequest(body: "The IP must be provided under the key 'port'.");
-  //         case Map():
-  //           return Response.badRequest(
-  //             body: "The IP and port must be provided under "
-  //                 "the keys 'ip' and 'port' respectively.",
-  //           );
-  //       }
-  //     }),
-  //   )
-  //   ..put(
-  //     "/click",
-  //     (Request request) => runJob(() async {
-  //       if (await requestFromMain((Requests.click, null)) case int clicks) {
-  //         return Response.ok(clicks.toString());
-  //       }
-  //       return Response.badRequest();
-  //     }),
-  //   );
-
   bool _isJobRunning = false;
-  Future<T> runJob<T>(Future<T> Function() job) async {
+
+  /// Runs a concurrent job in the isolate.
+  /// This should only be used in tasks that are REQUIRED to be run ATOMICALLY.
+  Future<T> runJob<T>(Future<T> Function() job) {
     assert(!_isJobRunning, "[runJob] must not be called inside another job.");
 
     var completer = Completer<T>.sync();
@@ -270,6 +217,11 @@ final class _IsolatedParentServer {
     return response;
   }
 
+  /// A shortcut for the [requestFromMain] method.
+  late final $ = requestFromMain;
+
+  /// Handles messages from the main isolate.
+  ///   This is the main handler for all messages from the main isolate.
   Future<void> handleMessagesFromMainIsolate(Object? data) async {
     assert(
       data is (String, Object?),
@@ -283,90 +235,96 @@ final class _IsolatedParentServer {
           receiveCompleters.containsKey(id),
           "The completer must be assigned before the request.",
         );
-        if (kDebugMode) {
-          print("[PARENT] Received request with id $id and data $v");
-        }
+        printDebug("[PARENT] Received request with id $id and data $v");
 
         receiveCompleters[id]!.complete(v);
-      case ("click", int clicks):
-        if (kDebugMode) {
-          print("[PARENT] Received click data: $clicks");
-          print("[PARENT] There are currently child devices with IPs $connectedChannels");
-        }
+        receiveCompleters.remove(id);
+      case ("state", String encodedState):
+        printDebug("[PARENT] Received state data: $encodedState");
+        printDebug("[PARENT] There are currently child devices with IPs $connectedChannels");
 
         await Future.wait([
-          for (var channel in connectedChannels.toList())
-            () async {
-              var errorEncountered = false;
-              var (error, _) = await throwableAsync(() => channel.ready);
-              if (error case SocketException() || WebSocketException()) {
-                errorEncountered = true;
-              }
-
-              if (errorEncountered) {
-                if (kDebugMode) {
-                  print("Removed channel due to error: $error.");
-                }
-
-                connectedChannels.remove(channel);
-              }
-
-              channel.sink.add(clicks.toString());
-            }(),
+          for (var channel in connectedChannels.toList()) //
+            Isolate.run(() => _updateChannel(channel, encodedState)),
         ]);
       case ("stop", _):
-        if (kDebugMode) {
-          print("[PARENT] Stopping server.");
-        }
+        printDebug("[PARENT] Stopping server.");
 
         // await serverInstance.close();
         receivePort.close();
         sendPort.send(("confirmClose", null));
+      case _:
+        throw StateError("[PARENT] Received unknown message: $data");
     }
   }
 
+  /// Updates the channel with the new state.
+  Future<void> _updateChannel(WebSocketChannel channel, String encodedState) async {
+    var (error, _) = await throwableAsync(() => channel.ready);
+    if (error case SocketException() || WebSocketException()) {
+      printDebug("Removed channel due to error: $error.");
+
+      connectedChannels.remove(channel);
+    }
+
+    channel.sink.add(encodedState);
+  }
+
+  /// Since the establishement of connections may require some time,
+  ///   with requests done asynchronously, we must wait make sure that
+  ///   establishing the connection is atomic.
   Future<void> handleWebSocketConnection(WebSocketChannel channel) => runJob(() async {
         /// First, we wait for the channel connection to be ready.
         var (socketError, _) = await throwableAsync(() => channel.ready);
-        if (socketError case SocketException() || WebSocketException()) {
-          if (kDebugMode) {
-            print("Channel was not ready. $socketError");
-          }
-          return;
-        } else if (socketError case var v?) {
-          if (kDebugMode) {
-            print("Error encountered in opening socket: $v");
-          }
+        if (socketError != null) {
+          printDebug("Error encountered in opening socket: $socketError");
 
           return;
         }
 
+        /// We add the channel to the list of connected channels.
         connectedChannels.add(channel);
 
         /// On first connection, we must send back the snapshot of data.
-        var (snapshotError, snapshot) =
-            await requestFromMain<String>((Requests.globalStateSnapshot, null));
-        if (snapshotError case != null) {
-          if (kDebugMode) {
-            print("Failed to fetch the global state snapshot.");
-          }
-
+        var (snapshotError, snapshot) = await $<String>((Requests.globalStateSnapshot, null));
+        await showDialog("Received snapshot $snapshot");
+        if (snapshotError != null) {
+          printDebug("Failed to fetch the global state snapshot.");
           return;
         }
 
+        /// After we get the state snapshot, we send it back to the child.
         channel.sink.add(jsonEncode({"state_snapshot": snapshot}));
+
+        /// Now, we wait for messages from the connection.
         await for (var message in channel.stream) {
           assert(message is String);
-          var decoded = jsonDecode(message as String);
 
-          switch (decoded) {
-            case {"id": int id, "updateMisc": 1}:
-              channel.sink.add(jsonEncode({"id": id, "success": true}));
-            case var message?:
-              if (kDebugMode) {
-                print("Unknown message $message");
-              }
+          if (await handleSocketMessage(channel, message as String) case var value?) {
+            channel.sink.add(value);
           }
         }
       });
+
+  /// Handles messages from a specific socket.
+  Future<String?> handleSocketMessage(WebSocketChannel channel, String message) async {
+    var decoded = jsonDecode(message);
+    switch (decoded) {
+      case {"id": int id, "updateMisc": 1}:
+        return jsonEncode({"id": id, "success": true});
+      case var message?:
+        if (kDebugMode) {
+          printDebug("Unknown message $message.");
+          await showDialog("Unknown message $message");
+        }
+
+        return null;
+    }
+  }
+
+  Future<void> showDialog(String message) async {
+    /// Since we are in a separate isolate, we must use the bridge to prompt the main isolate to show the dialog.
+
+    await requestFromMain<bool>((Requests.showDialog, message));
+  }
 }

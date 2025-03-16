@@ -2,7 +2,9 @@ import "dart:async";
 import "dart:io";
 
 import "package:application_server/backend/server_manager.dart";
+import "package:application_server/debug_print.dart";
 import "package:application_server/global_state.dart";
+import "package:application_server/isolate_dialog.dart";
 import "package:file_picker/file_picker.dart";
 import "package:fluent_ui/fluent_ui.dart" hide ButtonStyle;
 import "package:flutter/foundation.dart";
@@ -28,25 +30,16 @@ class _ApplicationWindowState extends State<ApplicationWindow> {
     super.initState();
 
     var serverManager = context.read<ServerManager>();
-    if (kDebugMode) {
-      print("Should prompt server start on boot: ${serverManager.shouldPromptServerStartOnBoot}");
-    }
+    unawaited(
+      context
+          .read<IsolateDialog>() //
+          .showDialog("Should prompt on boot: ${serverManager.shouldPromptServerStartOnBoot}"),
+    );
+
+    context.read<IsolateDialog>().globalContext = context;
 
     if (serverManager.shouldPromptServerStartOnBoot) {
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => Future.delayed(1.seconds, () async {
-          if (_key.currentContext case BuildContext context when context.mounted) {
-            switch (serverManager.mode.value) {
-              case DeviceClassification.parent:
-                throw UnimplementedError();
-              case DeviceClassification.child:
-                await serverManager.childPressed(context);
-              case DeviceClassification.none:
-                throw UnimplementedError();
-            }
-          }
-        }),
-      );
+      WidgetsBinding.instance.addPostFrameCallback(_revealMenu(serverManager));
     }
   }
 
@@ -59,163 +52,128 @@ class _ApplicationWindowState extends State<ApplicationWindow> {
         fontFamily: "Segoe UI",
       ),
       home: Builder(
-        key: _key,
         builder: (context) {
-          return NotificationListener<ServerNotification>(
-            onNotification: (notification) {
-              var serverManager = context.read<ServerManager>();
-
-              unawaited(() async {
-                switch (notification.mode) {
-                  case DeviceClassification.parent:
-                    await serverManager.parentPressed(context);
-                  case DeviceClassification.child:
-                    await serverManager.childPressed(context);
-                  case DeviceClassification.none:
-                    await serverManager.cancelPressed();
-                }
-              }());
-
-              return true;
-            },
+          return NotificationListener<DeviceClassificationChangeNotification>(
+            key: _key,
+            onNotification: _handleDeviceClassificationChangeNotification(context),
             child: Builder(
               builder: (context) {
                 var widget = const MyHomePage() as Widget;
 
-                if (Platform.isMacOS) {
-                  /// This is the macOS menu bar.
-                  widget = PlatformMenuBar(
-                    menus: [
-                      PlatformMenu(
-                        label: "The first menu.",
-                        menus: [
-                          /// Apparently, if the first menu is empty,
-                          ///   the application name is not displayed.
-                          PlatformMenuItem(
-                            label: "About",
-                            onSelected: () {},
-                          ),
-                        ],
-                      ),
-                      PlatformMenu(
-                        label: "File",
-                        menus: [
-                          PlatformMenuItemGroup(
-                            members: [
-                              PlatformMenuItem(
-                                label: "Open",
-                                onSelected: () async {
-                                  if (kDebugMode) {
-                                    print("Opening a file.");
-                                  }
-
-                                  var result = await FilePicker.platform.pickFiles();
-                                  if (result == null) {
-                                    return;
-                                  }
-
-                                  if (kDebugMode) {
-                                    print(result.names);
-                                  }
-                                },
-                              ),
-                              PlatformMenuItem(
-                                label: "Exit",
-                                onSelected: () {
-                                  if (kDebugMode) {
-                                    print("Hi");
-                                  }
-                                },
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ],
-                    child: widget,
-                  );
-                } else if (Platform.isWindows) {
-                  /// This is the Windows menu bar.
-                  widget = MenuBarWidget(
-                    barStyle: const MenuStyle(
-                      padding: WidgetStatePropertyAll(EdgeInsets.zero),
-                      backgroundColor: WidgetStatePropertyAll(Colors.white),
-                      shape: WidgetStatePropertyAll(RoundedRectangleBorder()),
-                    ),
-                    barButtonStyle: ButtonStyle(
-                      textStyle: const WidgetStatePropertyAll(TextStyle()),
-                      backgroundColor: WidgetStateProperty.resolveWith((states) {
-                        if (states.contains(WidgetState.hovered)) {
-                          return Colors.black.withValues(alpha: 0.05);
-                        }
-                        return Colors.white;
-                      }),
-                      minimumSize: const WidgetStatePropertyAll(Size.zero),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    menuButtonStyle: const ButtonStyle(
-                      textStyle: WidgetStatePropertyAll(TextStyle()),
-                      padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12.0)),
-                      backgroundColor: WidgetStatePropertyAll(Colors.white),
-                      minimumSize: WidgetStatePropertyAll(Size.zero),
-                      iconSize: WidgetStatePropertyAll(16.0),
-                    ),
-                    // The buttons in this List are displayed as the buttons on the bar itself
-                    barButtons: [
-                      BarButton(
-                        text: const Text("File"),
-                        submenu: SubMenu(
-                          menuItems: [
-                            MenuButton(
-                              text: const Text("Open"),
-                              onTap: () async {
-                                if (kDebugMode) {
-                                  print("Opening a file.");
-                                }
-
-                                var result = await FilePicker.platform.pickFiles();
-                                if (result == null) {
-                                  return;
-                                }
-
-                                if (kDebugMode) {
-                                  print(result.names);
-                                }
-                              },
-                              shortcutText: "Ctrl+O",
-                            ),
-                            MenuButton(
-                              text: const Text("Exit"),
-                              onTap: () {},
-                              shortcutText: "Ctrl+Q",
-                            ),
-                          ],
-                        ),
-                      ),
-                      BarButton(
-                        text: const Text("Help"),
-                        submenu: SubMenu(
-                          menuItems: [
-                            MenuButton(
-                              text: const Text("About"),
-                              onTap: () {},
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                    child: widget,
-                  );
-                } else {
-                  widget = SafeArea(child: widget);
-                }
-
-                return widget;
+                return Platform.isWindows ? _createWindowsMenuBar(context, widget) : SafeArea(child: widget);
               },
             ),
           );
         },
       ),
+    );
+  }
+
+  Future<void> Function(Object?) _revealMenu(ServerManager serverManager) {
+    return (_) async {
+      await Future<void>.delayed(1.seconds);
+
+      if (_key.currentContext case BuildContext context when context.mounted) {
+        switch (serverManager.mode.value) {
+          case DeviceClassification.parent:
+            await serverManager.parentPressed(context);
+          case DeviceClassification.child:
+            await serverManager.childPressed(context);
+          case DeviceClassification.none:
+            throw UnimplementedError();
+        }
+      }
+    };
+  }
+
+  bool Function(DeviceClassificationChangeNotification) //
+      _handleDeviceClassificationChangeNotification(BuildContext context) => (notification) {
+            var serverManager = context.read<ServerManager>();
+
+            unawaited(() async {
+              switch (notification.mode) {
+                case DeviceClassification.parent:
+                  await serverManager.parentPressed(context);
+                case DeviceClassification.child:
+                  await serverManager.childPressed(context);
+                case DeviceClassification.none:
+                  await serverManager.cancelPressed();
+              }
+            }());
+
+            return true;
+          };
+
+  MenuBarWidget _createWindowsMenuBar(BuildContext context, Widget child) {
+    return MenuBarWidget(
+      barStyle: const MenuStyle(
+        padding: WidgetStatePropertyAll(EdgeInsets.zero),
+        backgroundColor: WidgetStatePropertyAll(Colors.white),
+        shape: WidgetStatePropertyAll(RoundedRectangleBorder()),
+      ),
+      barButtonStyle: ButtonStyle(
+        textStyle: const WidgetStatePropertyAll(TextStyle()),
+        backgroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.hovered)) {
+            return Colors.black.withValues(alpha: 0.05);
+          }
+          return Colors.white;
+        }),
+        minimumSize: const WidgetStatePropertyAll(Size.zero),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      menuButtonStyle: const ButtonStyle(
+        textStyle: WidgetStatePropertyAll(TextStyle()),
+        padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12.0)),
+        backgroundColor: WidgetStatePropertyAll(Colors.white),
+        minimumSize: WidgetStatePropertyAll(Size.zero),
+        iconSize: WidgetStatePropertyAll(16.0),
+      ),
+      // The buttons in this List are displayed as the buttons on the bar itself
+      barButtons: [
+        BarButton(
+          text: const Text("File"),
+          submenu: SubMenu(
+            menuItems: [
+              MenuButton(
+                text: const Text("Open"),
+                onTap: () async {
+                  if (kDebugMode) {
+                    printDebug("Opening a file.");
+                  }
+
+                  var result = await FilePicker.platform.pickFiles();
+                  if (result == null) {
+                    return;
+                  }
+
+                  if (kDebugMode) {
+                    printDebug(result.names);
+                  }
+                },
+                shortcutText: "Ctrl+O",
+              ),
+              MenuButton(
+                text: const Text("Exit"),
+                onTap: () {},
+                shortcutText: "Ctrl+Q",
+              ),
+            ],
+          ),
+        ),
+        BarButton(
+          text: const Text("Help"),
+          submenu: SubMenu(
+            menuItems: [
+              MenuButton(
+                text: const Text("About"),
+                onTap: () {},
+              ),
+            ],
+          ),
+        ),
+      ],
+      child: widget,
     );
   }
 }
@@ -272,12 +230,12 @@ class _MyHomePageState extends State<MyHomePage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Button(
-                  onPressed: () => const ServerNotification(DeviceClassification.child) //
+                  onPressed: () => const DeviceClassificationChangeNotification(DeviceClassification.child) //
                       .dispatch(context),
                   child: const Text("Child"),
                 ),
                 Button(
-                  onPressed: () => const ServerNotification(DeviceClassification.parent) //
+                  onPressed: () => const DeviceClassificationChangeNotification(DeviceClassification.parent) //
                       .dispatch(context),
                   child: const Text("Parent"),
                 ),
@@ -288,7 +246,7 @@ class _MyHomePageState extends State<MyHomePage> {
               builder: (_, value, __) => Button(
                 onPressed: switch (value) {
                   DeviceClassification.none => null,
-                  _ => () => const ServerNotification(DeviceClassification.none) //
+                  _ => () => const DeviceClassificationChangeNotification(DeviceClassification.none) //
                       .dispatch(context),
                 },
                 child: const Text("Close"),

@@ -17,8 +17,10 @@ import "dart:convert";
 import "dart:io";
 import "dart:isolate";
 
+import "package:application_server/debug_print.dart";
 import "package:application_server/future_not_null.dart";
 import "package:application_server/global_state.dart";
+import "package:application_server/isolate_dialog.dart";
 import "package:application_server/playground_parallelism.dart";
 import "package:application_server/throwable.dart";
 import "package:async_queue/async_queue.dart";
@@ -38,11 +40,12 @@ sealed class ShelfServer {
   Future<void> stopServer();
 
   bool get isStarted;
-  Completer<int> get startCompleter;
-  Completer<int> get closeCompleter;
+  Completer<void> get startCompleter;
+  Completer<void> get closeCompleter;
 }
 
 extension type const Requests._(String inner) {
+  static const Requests showDialog = Requests._("showDialog");
   static const Requests globalStateSnapshot = Requests._("globalStateSnapshot");
   static const Requests overrideGlobalState = Requests._("overrideGlobalState");
   static const Requests click = Requests._("click");
@@ -65,9 +68,7 @@ Future<int> _shelfInitiate(
   var handler = webSocketHandler(onConnect);
   var server = await shelf_io.serve(handler, ip, port);
 
-  if (kDebugMode) {
-    print("[:Server] Serving at $ip:$port");
-  }
+  printDebug("Serving at $ip:$port");
 
   return server.port;
 }

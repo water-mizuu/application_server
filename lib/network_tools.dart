@@ -1,11 +1,15 @@
+import "dart:async";
 import "dart:isolate";
 
+import "package:application_server/debug_print.dart";
 import "package:application_server/future_not_null.dart";
 import "package:application_server/playground_parallelism.dart";
+import "package:application_server/throwable.dart";
 import "package:flutter/services.dart";
 import "package:network_info_plus/network_info_plus.dart";
 import "package:network_tools/network_tools.dart";
 import "package:path_provider/path_provider.dart";
+import "package:time/time.dart";
 
 late final String deviceIp;
 
@@ -23,15 +27,19 @@ Future<void> initializeNetworkTools() async {
   );
 
   deviceIp = await NetworkInfo().getWifiIP().notNull();
+  printDebug("Device IP: $deviceIp");
 
   /// Initialize the network tools in the root isolate too.
   var appDocDirectory = await getApplicationDocumentsDirectory();
+  printDebug("Application Document Directory: ${appDocDirectory.path}");
+
   await configureNetworkTools(appDocDirectory.path);
   await Isolate.spawn(
     _networkTools,
     (_networkToolsReceivePort.sendPort, RootIsolateToken.instance!, deviceIp),
   );
   _networkToolsSendPort = await _networkToolsReceivePort.next<SendPort>();
+  printDebug("Successfully initialized network tools: ${_networkToolsSendPort}");
 }
 
 /// Scans the local network for active hosts, returning a list of tuples
@@ -52,6 +60,8 @@ Future<List<(Future<String>, String)>> scanIps() async {
   ];
 }
 
+/// The process run by the isolate. After the initialization,
+///   The isolate waits for the receivePort.
 Future<void> _networkTools((SendPort, RootIsolateToken, String) payload) async {
   /// Isolate Initialization
   var (sendPort, token, deviceIp) = payload;
@@ -62,8 +72,15 @@ Future<void> _networkTools((SendPort, RootIsolateToken, String) payload) async {
   sendPort.send(receivePort.sendPort);
 
   /// Necessary for the network tools to work in the separate isolate.
-  var appDocDirectory = await getApplicationDocumentsDirectory();
-  await configureNetworkTools(appDocDirectory.path);
+  var (appDocDirectoryError, appDocDirectory) = await throwableAsync(
+    () => getApplicationDocumentsDirectory().timeout(2.seconds),
+  );
+  if (appDocDirectoryError case TimeoutException()) {
+    printDebug("");
+  } else {
+    await configureNetworkTools(appDocDirectory!.path);
+  }
+
   var subnet = deviceIp.substring(0, deviceIp.lastIndexOf("."));
 
   var run = true;

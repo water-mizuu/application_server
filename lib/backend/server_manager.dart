@@ -2,35 +2,39 @@ import "dart:async";
 import "dart:io";
 
 import "package:application_server/backend/shelf.dart";
+import "package:application_server/debug_print.dart";
 import "package:application_server/global_state.dart";
+import "package:application_server/isolate_dialog.dart";
 import "package:application_server/main.dart";
 import "package:application_server/network_tools.dart";
 import "package:fluent_ui/fluent_ui.dart";
-import "package:flutter/foundation.dart";
 import "package:flutter/material.dart" hide Colors, Divider, NavigationBar, showDialog;
-import "package:http/http.dart" as http;
 import "package:time/time.dart";
 
-enum DeviceClassification {
-  parent,
-  child,
-  none,
-}
+/// Represents the different states of device classification.
+///   [parent] states that the device is a host,
+///   [child] states that the device is dependent upon a host,
+///   [none] states that the device must decide.
+enum DeviceClassification { parent, child, none }
 
+/// Represents an address of IP: string; PORT: int;
 typedef Address = (String, int);
-typedef DeferredHostInfo = (Future<String>, String);
 
-class ServerNotification extends Notification {
-  const ServerNotification(this.mode);
+class DeviceClassificationChangeNotification extends Notification {
+  const DeviceClassificationChangeNotification(this.mode);
 
   final DeviceClassification mode;
 }
 
 /// The server manager is responsible for creating, hosting, and closing the server.
 class ServerManager {
-  ServerManager(this.globalState);
+  ServerManager(this.isolateDialog, this.globalState);
 
+  /// The [globalState] is shared between the main isolate and the connection isolate.
   final GlobalState globalState;
+
+  /// A helper class that allows for the display of dialog boxes from the isolate.
+  final IsolateDialog isolateDialog;
 
   /// The mode of the device. It should be either parent or child, or unspecified at the start.
   /// In the future, this will be assigned only at first,
@@ -40,14 +44,18 @@ class ServerManager {
   // Relevant attributes for the parent device.
   late final ValueNotifier<Address?> address = ValueNotifier(null);
 
-  /// The address of the parent device.
+  /// The address of the host device.
+  /// It is a value notifier as to allow listeners to change upon reassignment of addresses.
   late final ValueNotifier<Address?> parentAddress = ValueNotifier(null);
 
+  /// An indicator as to whether a server is running / a connection is started.
   late final ValueNotifier<bool> isServerRunning = ValueNotifier(false);
 
-  /// Indicate that the attempt to start the server based on the previous session failed.
+  /// Indicator that the attempt to start the server based on the previous session failed.
   late final bool shouldPromptServerStartOnBoot;
 
+  /// Initializes the manager.
+  /// It starts the server automatically if there is proper storage in the shared preferences.
   Future<void> initialize() async {
     /// Read the mode from shared preferences.
     /// If it is stored:
@@ -63,69 +71,98 @@ class ServerManager {
           var ip = sharedPreferences.getString("ip")!;
           var port = sharedPreferences.getInt("port")!;
 
+          /// A flag that indicates the presnce of error.
           var encounteredError = true;
-          await for (var (type, _) in hostParent((ip, port))) {
-            if (type == "done") {
-              encounteredError = false;
+
+          /// If the assigned IP is not the same as the cached device IP,
+          ///   we have to indicate that there is a failure.
+          if (ip == deviceIp) {
+            /// [hostParent] is a stream of log messages.
+            await for (var message in hostParent((ip, port))) {
+              if (message case ("done", _)) {
+                encounteredError = false;
+              }
             }
           }
 
+          /// If we encountered an error, we should prompt the user to (re)start the connection.
           shouldPromptServerStartOnBoot = encounteredError;
         case DeviceClassification.child:
-          var ip = sharedPreferences.getString("ip")!;
-          var port = sharedPreferences.getInt("port")!;
           var parentIp = sharedPreferences.getString("parent_ip")!;
           var parentPort = sharedPreferences.getInt("parent_port")!;
 
+          /// A flag that indicates the presnce of error.
           var encounteredError = true;
-          await for (var (type, _) in hostChild((ip, port), (parentIp, parentPort))) {
-            if (type == "done") {
+
+          /// We do not have te check for the child IP, as children do not have
+          ///   to host servers anymore.
+          /// [hostChild] is a stream of log messages.
+          await for (var message in hostChild((parentIp, parentPort))) {
+            if (message case ("done", _)) {
               encounteredError = false;
             }
           }
 
-          if (kDebugMode) {
-            print("Encountered error: $encounteredError");
-          }
-
+          /// If we encountered an error, we should prompt the user to (re)start the connection.
           shouldPromptServerStartOnBoot = encounteredError;
         case DeviceClassification.none:
-          shouldPromptServerStartOnBoot = false;
+
+          /// If there was none saved, we should already prompt a restart.
+          shouldPromptServerStartOnBoot = true;
       }
     } else {
       mode.value = DeviceClassification.none;
-      shouldPromptServerStartOnBoot = false;
+      shouldPromptServerStartOnBoot = true;
     }
   }
 
+  /// The method to host the server as a parent.
+  /// It is a generator as it allows for the stream of log messages.
+  /// It is private as it should not be called directly.
   Stream<(String, Object)> _hostParent(Address local) async* {
     var (ip, port) = local;
     address.value = null;
     parentAddress.value = null;
 
+    /// A flag that indicates the presence of error.
+    ///   We only set it to false if the server starts successfully.
     var completedWithError = true;
     try {
-      if (_currentServer case var server? when server.isStarted) {
-        yield ("message", "Closing the existing server at http://${server.ip}:${server.port}");
-        await server.stopServer();
-        yield ("message", "Closed the server.");
+      /// First, we close the existing server.
+      switch (_currentServer) {
+        case HostServer server:
+          yield ("message", "Closing the existing server at ws://${server.ip}:${server.port}");
+          await server.stopServer();
+          yield ("message", "Closed the server.");
+        case ClientConnection server:
+          await server.stopServer();
+        case null:
+          break;
       }
 
+      /// We create a serovor instance and start it.
+      _currentServer = HostServer(isolateDialog, globalState, ip, port);
+      await _currentServer!.startServer();
+
+      yield ("message", "Started server at http://$ip:$port");
+      yield ("done", "Server started");
+
+      /// Assuming that the server started successfully, we set the address and mode.
+      ///   We also save the address and mode to shared preferences.
+      address.value = (ip, port);
+      parentAddress.value = null;
+      mode.value = DeviceClassification.parent;
       await (
         sharedPreferences.setInt("mode", DeviceClassification.parent.index),
         sharedPreferences.setString("ip", ip),
         sharedPreferences.setInt("port", port),
+
+        /// We remove the child address and mode as we are now a parent.
         sharedPreferences.remove("parent_ip"),
         sharedPreferences.remove("parent_port"),
       ).wait;
 
-      _currentServer = ShelfParentServer(globalState, ip, port);
-      await _currentServer!.startServer();
-      yield ("message", "Started server at http://$ip:$port");
-      yield ("done", "Server started");
-      address.value = (ip, port);
-      parentAddress.value = null;
-      mode.value = DeviceClassification.parent;
+      /// We set the flag to false as we have successfully started the server.
       completedWithError = false;
     } on SocketException catch (e) {
       yield ("exception", e);
@@ -136,22 +173,33 @@ class ServerManager {
         address.value = null;
         parentAddress.value = null;
         mode.value = DeviceClassification.none;
-        await closeServer();
+        await stopServer();
+        await (
+          sharedPreferences.remove("mode"),
+          sharedPreferences.remove("ip"),
+          sharedPreferences.remove("port"),
+          sharedPreferences.remove("parent_ip"),
+          sharedPreferences.remove("parent_port"),
+        ).wait;
       }
     }
   }
 
+  /// The method to host the server as a parent.
+  /// It is a generator as it allows for the stream of log messages.
   Stream<(String, Object)> hostParent(Address local) async* {
     await for (var (type, message) in _hostParent(local)) {
-      if (kDebugMode) {
-        print("[MAIN\$$type] $message");
-      }
+      printDebug("[$type] $message");
       yield (type, message);
     }
   }
 
-  Stream<(String, Object)> _hostChild(Address local, Address parent) async* {
-    var (ip, port) = local;
+  /// The method to host the server as a child.
+  /// It is a generator as it allows for the stream of log messages.
+  /// It is private as it should not be called directly.
+  /// However, it should be noted that this does NOT start a server.
+  ///   It merely creates a connection to the parent server.
+  Stream<(String, Object)> _hostChild(Address parent) async* {
     var (parentIp, parentPort) = parent;
 
     address.value = null;
@@ -159,45 +207,31 @@ class ServerManager {
 
     var completedWithError = true;
     try {
-      if (_currentServer case ShelfServer server when server.isStarted) {
-        yield ("message", "Closing the existing server at http://${server.ip}:${server.port}");
-        await server.stopServer();
-        yield ("message", "Closed the server.");
+      switch (_currentServer) {
+        case HostServer server:
+          yield ("message", "Closing the existing server at ws://${server.ip}:${server.port}");
+          await server.stopServer();
+          yield ("message", "Closed the server.");
+        case ClientConnection server:
+          await server.stopServer();
+        case null:
+          break;
       }
 
+      _currentServer = ClientConnection(globalState, parentIp, parentPort);
+      await _currentServer!.startServer();
+
+      address.value = null;
+      parentAddress.value = (parentIp, parentPort);
+      mode.value = DeviceClassification.child;
       await (
         sharedPreferences.setInt("mode", DeviceClassification.child.index),
-        sharedPreferences.setString("ip", ip),
-        sharedPreferences.setInt("port", port),
         sharedPreferences.setString("parent_ip", parentIp),
         sharedPreferences.setInt("parent_port", parentPort),
       ).wait;
-
-      _currentServer = ShelfChildServer(globalState, ip, parentIp, parentPort);
-      await _currentServer!.startServer();
-      port = _currentServer!.port;
-      yield ("message", "Started server at http://$ip:$port");
-
-      var uri = Uri.parse("http://$parentIp:$parentPort/register_child_device?ip=$ip&port=$port");
-      var response = await http.post(uri).timeout(1.seconds);
-      if (response.statusCode != 200) {
-        throw Exception("Failed to handshake with the parent device.");
-      }
-
-      /// Synchronize the data with the parent device.
-
-      yield ("message", "Handshaked with the parent device at http://$parentIp:$parentPort");
-      yield ("done", "Connection established");
-
-      address.value = (ip, port);
-      parentAddress.value = (parentIp, parentPort);
-      mode.value = DeviceClassification.child;
       completedWithError = false;
     } on TimeoutException catch (e) {
-      if (kDebugMode) {
-        print("The connection timed out. ${e.message}");
-      }
-
+      printDebug(" timed out. ${e.message}");
       yield ("timeout_exception", e);
     } on SocketException catch (e) {
       yield ("exception", e);
@@ -208,16 +242,24 @@ class ServerManager {
     } finally {
       /// If we had an error, we need to make sure that there is no server lingering.
       if (completedWithError) {
-        await closeServer();
+        address.value = null;
+        parentAddress.value = null;
+        mode.value = DeviceClassification.none;
+        await (
+          sharedPreferences.remove("mode"),
+          sharedPreferences.remove("ip"),
+          sharedPreferences.remove("port"),
+          sharedPreferences.remove("parent_ip"),
+          sharedPreferences.remove("parent_port"),
+        ).wait;
+        await stopServer();
       }
     }
   }
 
-  Stream<(String, Object)> hostChild(Address local, Address parent) async* {
-    await for (var (type, message) in _hostChild(local, parent)) {
-      if (kDebugMode) {
-        print("[MAIN\$$type] $message");
-      }
+  Stream<(String, Object)> hostChild(Address parent) async* {
+    await for (var (type, message) in _hostChild(parent)) {
+      printDebug("[$type] $message");
       yield (type, message);
     }
   }
@@ -540,7 +582,6 @@ class ServerManager {
 
                                 setState(() {
                                   serverStartStream = hostChild(
-                                    (deviceIp, 0),
                                     (parentIp, parentPort),
                                   );
                                 });
@@ -551,9 +592,7 @@ class ServerManager {
                         ),
                         Expanded(
                           child: Center(
-                            child: serverStartStream == null
-                                ? const SizedBox()
-                                : const CircularProgressIndicator(),
+                            child: serverStartStream == null ? const SizedBox() : const CircularProgressIndicator(),
                           ),
                         ),
                         if (serverStartStream case var serverStartStream?)
@@ -570,10 +609,7 @@ class ServerManager {
                                     return Text("Message: $message");
 
                                   /// Error Code 13: Permission denied.
-                                  case (
-                                      "exception",
-                                      SocketException(osError: OSError(errorCode: 13))
-                                    ):
+                                  case ("exception", SocketException(osError: OSError(errorCode: 13))):
                                     return Text(
                                       "Permission denied. Either the port is already in use"
                                       " or you don't have permission to use it. Try another port.",
@@ -617,7 +653,7 @@ class ServerManager {
 
   Future<void> cancelPressed() async {
     /// Close the existing server (if there is one.)
-    await closeServer();
+    await stopServer();
 
     /// Update the saved addresses and mode.
     address.value = null;
@@ -633,80 +669,42 @@ class ServerManager {
       sharedPreferences.remove("parent_port"),
     ).wait;
 
-    /// Reset the state.
+    ///   set the state.
     globalState.counter.value = 0;
   }
 
-  Future<void> closeServer() async {
+  Future<void> stopServer() async {
+    switch (_currentServer) {
+      case HostServer server:
+        await server.stopServer();
+      case ClientConnection server:
+        await server.stopServer();
+      case null:
+        break;
+    }
+
     isServerRunning.value = false;
     await _currentServer?.stopServer();
   }
 
+  Future<void> cleanLingering() async {
+    address.value = null;
+    parentAddress.value = null;
+    mode.value = DeviceClassification.none;
+    await (
+      sharedPreferences.remove("mode"),
+      sharedPreferences.remove("ip"),
+      sharedPreferences.remove("port"),
+      sharedPreferences.remove("parent_ip"),
+      sharedPreferences.remove("parent_port"),
+    ).wait;
+
+    await stopServer();
+  }
+
   Future<void> dispose() async {
-    await closeServer();
+    await stopServer();
   }
 
   ShelfServer? _currentServer;
 }
-
-// /// Returns a list of all the DETECTED devices in the network.
-// /// The first item of the tuple is the name of the device (if detected).
-// /// The second item of the tuple is the local IP address of the device.
-// Future<List<(String, String)>> _resolveArpsInAnotherIsolate() async {
-//   var result = await compute(
-//     (token) async {
-//       BackgroundIsolateBinaryMessenger.ensureInitialized(token);
-
-//       var ipAddresses = await _resolveArp();
-//       var names = await Future.wait(ipAddresses.map(_resolveDeviceNameFromIp));
-//       var zipped = names.zip(ipAddresses).toList();
-
-//       return zipped;
-//     },
-//     RootIsolateToken.instance!,
-//   );
-
-//   return result;
-// }
-
-// final RegExp _deviceArpRegEx = RegExp(r"(\S+)\s*\S+\s*\S+");
-
-// /// Hopefully, this is okay as it is only tested in Windows 11.
-// Future<List<String>> _resolveArp() async {
-//   var values = await Process.run("arp", ["-a"]);
-//   var stdout = (values.stdout as String).replaceAll("\r", "");
-//   var results = stdout.split("\n").map((s) => s.trim()).toList();
-//   var selfIp = await NetworkInfo().getWifiIP().notNull();
-//   var subnet = selfIp.substring(0, selfIp.lastIndexOf("."));
-//   var ipAddresses = results
-//       .map((s) => _deviceArpRegEx.matchAsPrefix(s))
-//       .where((s) => s != null)
-//       .cast<Match>()
-//       .map((s) => s.group(1)!)
-//       .where((s) => s.startsWith(subnet))
-//       .where((s) => s != selfIp && !{"$subnet.1", "$subnet.255"}.contains(s))
-//       .toList();
-
-//   return ipAddresses;
-// }
-
-// final RegExp _deviceNameRegex = RegExp(r"\s*Name:\s*(\S+)\s*");
-
-// Future<String> _resolveDeviceNameFromIp(String ip) async {
-//   var values = await Process.run("nslookup", [ip]);
-//   var stdout = (values.stdout as String).replaceAll("\r", "");
-//   if (kDebugMode) {
-//     print("ip: $ip \t stdout: $stdout");
-//   }
-//   var second = stdout //
-//       .split("\n\n")
-//       .map((s) => s.replaceAll("\n", " ").trim())
-//       .where((s) => s.isNotEmpty)
-//       .last;
-
-//   if (_deviceNameRegex.matchAsPrefix(second) case Match match) {
-//     return match.group(1)!;
-//   } else {
-//     return "Unnamed device";
-//   }
-// }

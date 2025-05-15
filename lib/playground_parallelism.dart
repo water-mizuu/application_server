@@ -1,5 +1,7 @@
 /// A helper library that makes it easier to work with ReceivePorts and SendPorts.
 ///   It lets receive ports be used declaratively.
+///   - For example, you can use the [next] method to get the next message from the receive port.
+///   - You can also use the [call] method to get the next message from the receive port.
 library;
 
 import "dart:async";
@@ -53,8 +55,7 @@ extension type ListenedReceivePort._(ReceivePort _port) {
   // Pseudo-fields. These are used to store values specific to each [ReceivePort] instance.
 
   FutureOr<void> Function(Object?)? get _fallbackListener => _fallbackListeners[_port];
-  set _fallbackListener(FutureOr<void> Function(Object?)? listener) =>
-      _fallbackListeners[_port] = listener;
+  set _fallbackListener(FutureOr<void> Function(Object?)? listener) => _fallbackListeners[_port] = listener;
 
   Queue<Completer<Object?>> get _completer => _completers[_port]!;
   set _completer(Queue<Completer<Object?>> completer) => _completers[_port] = completer;
@@ -67,7 +68,7 @@ extension type ListenedReceivePort._(ReceivePort _port) {
       return _queue.removeFirst() as T;
     }
 
-    var completer = Completer<dynamic>();
+    var completer = Completer<void>();
     _completer.addLast(completer);
     var rawValue = await completer.future as Object?;
     assert(
@@ -80,6 +81,8 @@ extension type ListenedReceivePort._(ReceivePort _port) {
 
     return value;
   }
+
+  Future<T> call<T>() => next<T>();
 
   /// Redirects all the messages received by the [ReceivePort] to the [sendPort].
   void redirectMessagesTo(SendPort sendPort) {

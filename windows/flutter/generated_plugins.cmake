@@ -3,6 +3,8 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  desktop_lifecycle
+  desktop_multi_window
   system_theme
 )
 

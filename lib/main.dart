@@ -1,5 +1,6 @@
 import "dart:async";
 import "dart:convert" show jsonDecode, jsonEncode;
+import "dart:io";
 
 import "package:application_server/backend/server_manager.dart";
 import "package:application_server/debug_print.dart";
@@ -103,7 +104,9 @@ class _ApplicationWindowState extends State<ApplicationWindow> {
             );
             await window.setFrame(Offset.zero & const Size(480, 270));
             await window.center();
-            await window.resizable(false);
+            if (Platform.isMacOS) {
+              await window.resizable(false);
+            }
             await window.setTitle("Another window");
             await window.show();
           }());
@@ -120,6 +123,7 @@ class _ApplicationWindowState extends State<ApplicationWindow> {
         padding: WidgetStatePropertyAll(EdgeInsets.zero),
         backgroundColor: WidgetStatePropertyAll(Colors.white),
         shape: WidgetStatePropertyAll(RoundedRectangleBorder()),
+        fixedSize: WidgetStatePropertyAll(Size(double.infinity, 24.0)),
       ),
       barButtonStyle: ButtonStyle(
         textStyle: const WidgetStatePropertyAll(TextStyle()),
@@ -309,10 +313,15 @@ class ExampleSubWindow extends StatelessWidget {
     return FluentApp(
       debugShowCheckedModeBanner: false,
       home: Scaffold(
-        appBar: AppBar(
-          title: const Text("Plugin example app", style: TextStyle(fontSize: 16.0)),
-          toolbarHeight: 28.0,
-        ),
+        appBar: () {
+          if (Platform.isMacOS) {
+            return AppBar(
+              title: const Text("Plugin example app", style: TextStyle(fontSize: 16.0)),
+              toolbarHeight: 28.0,
+            );
+          }
+          return null;
+        }(),
         body: Column(
           children: [
             const Expanded(

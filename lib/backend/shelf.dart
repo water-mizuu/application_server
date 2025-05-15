@@ -59,7 +59,7 @@ extension type const Requests._(String inner) {
 ///   (i.e if the [port] is 0, the port will be randomly assigned.
 ///    Otherwise, the port will be the same as the one provided.)
 Future<int> _shelfInitiate(
-  FutureOr<void> Function(WebSocketChannel channel) onConnect,
+  FutureOr<void> Function(WebSocketChannel channel, [String? subprotocol]) onConnect,
   int port,
 ) async {
   var network = NetworkInfo();

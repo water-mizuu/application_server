@@ -1,6 +1,6 @@
 part of "shelf.dart";
 
-/// Is the main class handling the connection of the application to
+/// The main class handling the connection of the application to
 ///   the parent server.
 final class HostServer implements ShelfServer {
   HostServer(
@@ -129,6 +129,7 @@ final class HostServer implements ShelfServer {
     _serverSendPort.send(("requested", (id, json)));
   }
 
+  /// Prompts the application to show a message dialog.
   Future<void> _showDialog(int id, String message) async {
     await _dialog.showDialog(message);
 
@@ -158,7 +159,6 @@ final class _IsolatedParentServer {
 
   /// A catcher of sorts for the receivePort listener.
   /// Whenever we request something from the main isolate, we must assign a completer BEFOREHAND.
-  // Completer<Object?>? _receiveCompleter;
   late final Map<int, Completer<Object?>> receiveCompleters = {};
   final List<WebSocketChannel> connectedChannels = [];
 
@@ -220,6 +220,9 @@ final class _IsolatedParentServer {
   /// A shortcut for the [requestFromMain] method.
   late final $ = requestFromMain;
 
+  // ignore: prefer_function_declarations_over_variables
+  late final $_ = <T extends Object>(Requests request) async => requestFromMain<T>((request, null));
+
   /// Handles messages from the main isolate.
   ///   This is the main handler for all messages from the main isolate.
   Future<void> handleMessagesFromMainIsolate(Object? data) async {
@@ -273,38 +276,40 @@ final class _IsolatedParentServer {
   /// Since the establishement of connections may require some time,
   ///   with requests done asynchronously, we must wait make sure that
   ///   establishing the connection is atomic.
-  Future<void> handleWebSocketConnection(WebSocketChannel channel) => runJob(() async {
-        /// First, we wait for the channel connection to be ready.
-        var (socketError, _) = await throwableAsync(() => channel.ready);
-        if (socketError != null) {
-          printDebug("Error encountered in opening socket: $socketError");
+  Future<void> handleWebSocketConnection(WebSocketChannel channel, [String? subprotocol]) {
+    return runJob(() async {
+      /// First, we wait for the channel connection to be ready.
+      var (socketError, _) = await throwableAsync(() => channel.ready);
+      if (socketError != null) {
+        printDebug("Error encountered in opening socket: $socketError");
 
-          return;
+        return;
+      }
+
+      /// We add the channel to the list of connected channels.
+      connectedChannels.add(channel);
+
+      /// On first connection, we must send back the snapshot of data.
+      var (snapshotError, snapshot) = await $_<String>(Requests.globalStateSnapshot);
+      await showDialog("Received snapshot $snapshot");
+      if (snapshotError != null) {
+        printDebug("Failed to fetch the global state snapshot.");
+        return;
+      }
+
+      /// After we get the state snapshot, we send it back to the child.
+      channel.sink.add(jsonEncode({"state_snapshot": snapshot}));
+
+      /// Now, we wait for messages from the connection.
+      await for (var message in channel.stream) {
+        assert(message is String);
+
+        if (await handleSocketMessage(channel, message as String) case var value?) {
+          channel.sink.add(value);
         }
-
-        /// We add the channel to the list of connected channels.
-        connectedChannels.add(channel);
-
-        /// On first connection, we must send back the snapshot of data.
-        var (snapshotError, snapshot) = await $<String>((Requests.globalStateSnapshot, null));
-        await showDialog("Received snapshot $snapshot");
-        if (snapshotError != null) {
-          printDebug("Failed to fetch the global state snapshot.");
-          return;
-        }
-
-        /// After we get the state snapshot, we send it back to the child.
-        channel.sink.add(jsonEncode({"state_snapshot": snapshot}));
-
-        /// Now, we wait for messages from the connection.
-        await for (var message in channel.stream) {
-          assert(message is String);
-
-          if (await handleSocketMessage(channel, message as String) case var value?) {
-            channel.sink.add(value);
-          }
-        }
-      });
+      }
+    });
+  }
 
   /// Handles messages from a specific socket.
   Future<String?> handleSocketMessage(WebSocketChannel channel, String message) async {

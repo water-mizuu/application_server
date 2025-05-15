@@ -39,6 +39,7 @@ Future<void> initializeNetworkTools() async {
     (_networkToolsReceivePort.sendPort, RootIsolateToken.instance!, deviceIp),
   );
   _networkToolsSendPort = await _networkToolsReceivePort.next<SendPort>();
+  printDebug("Successfully initialized network tools: ${_networkToolsSendPort}");
 }
 
 /// Scans the local network for active hosts, returning a list of tuples

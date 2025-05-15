@@ -122,6 +122,7 @@ final class ClientConnection implements ShelfServer {
       ///   So, we don't need to send anything back.
       case (int _, (Requests.confirmClose, _)):
         closeCompleter.complete();
+ 
       case _:
         throw StateError("Unrecognized message: $message");
     }
